@@ -10,7 +10,7 @@
 
   const apiMessage = ref<string>('APIからデータを取得中...')
   // 【ここにPart 3-2で取得したCloud FunctionsのURLを貼り付けます】
-  const API_URL: string = '【Cloud FunctionsのURL】'
+  const API_URL: string = 'https://hello-api-799586295685.asia-northeast1.run.app'
 
   onMounted(async () => {
     try {
