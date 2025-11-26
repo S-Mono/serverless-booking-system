@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, query, where, Timestamp } from 'firebase/firestore'
@@ -16,84 +16,214 @@ interface Menu
   description?: string
 }
 
+interface Staff
+{
+  id: string
+  name: string
+  roles: {
+    accepts_new_customer: boolean
+    accepts_free_booking: boolean
+  }
+  is_working: boolean
+}
+
+interface CustomerProfile
+{
+  id: string
+  name_kana: string
+  is_existing_customer: boolean
+}
+
 const router = useRouter()
 const menus = ref<Menu[]>([])
+const staffs = ref<Staff[]>([])
 const loading = ref(true)
-const processing = ref(false) // 予約処理中フラグ
+const processing = ref(false)
 const errorMessage = ref('')
 const currentUser = ref<any>(null)
 
-// --- モーダル用データ ---
+const customerProfile = ref<CustomerProfile | null>(null)
+const isNewUser = ref(false)
+
 const showModal = ref(false)
-const selectedMenu = ref<Menu | null>(null)
-const reservationDate = ref('') // 入力された日時文字列
+const selectedMenus = ref<Menu[]>([])
+const reservationDate = ref('')
+const selectedStaffId = ref<string>('')
+const customerNote = ref('') // 👈 追加: メモ入力用
 
-// 1. 初期化 (ユーザー監視 & メニュー取得)
-onMounted(async () =>
+// 現在時刻のISO文字列取得 (min属性用)
+const minDateTime = computed(() =>
 {
-  onAuthStateChanged(auth, (user) =>
-  {
-    currentUser.value = user
-  })
-
-  try
-  {
-    const querySnapshot = await getDocs(collection(db, 'menus'))
-    menus.value = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as Menu[]
-  } catch (error)
-  {
-    console.error(error)
-    errorMessage.value = 'メニューの読み込みに失敗しました'
-  } finally
-  {
-    loading.value = false
-  }
+  const now = new Date()
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
+  return now.toISOString().slice(0, 16)
 })
 
-// 2. モーダルを開く
-const openBookingModal = (menu: Menu) =>
+// --- 1. データ取得 & 名寄せ ---
+const checkCustomerStatus = async (user: any) =>
 {
-  if (!currentUser.value)
+  if (!user || !user.email) return
+  const phoneNumber = user.email.split('@')[0]
+  try
   {
-    alert('予約するにはログインが必要です')
-    router.push('/login')
+    const q = query(collection(db, 'customers'), where('phone_number', '==', phoneNumber))
+    const snapshot = await getDocs(q)
+    if (!snapshot.empty)
+    {
+      const data = snapshot.docs[0].data()
+      customerProfile.value = {
+        id: snapshot.docs[0].id,
+        name_kana: data.name_kana,
+        is_existing_customer: data.is_existing_customer
+      }
+      isNewUser.value = !data.is_existing_customer
+    } else
+    {
+      isNewUser.value = true
+      customerProfile.value = null
+    }
+  } catch (error)
+  {
+    console.error('名寄せエラー:', error)
+  }
+}
+
+onMounted(async () =>
+{
+  onAuthStateChanged(auth, async (user) =>
+  {
+    currentUser.value = user
+    if (user)
+    {
+      await checkCustomerStatus(user)
+      try
+      {
+        const menuSnap = await getDocs(collection(db, 'menus'))
+        menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Menu[]
+
+        const staffSnap = await getDocs(collection(db, 'staffs'))
+        staffs.value = staffSnap.docs.map(doc =>
+        {
+          const d = doc.data()
+          // is_workingがない古いデータはtrue扱い
+          return { id: doc.id, ...d, is_working: d.is_working ?? true }
+        }) as Staff[]
+      } catch (error)
+      {
+        errorMessage.value = 'データの読み込みに失敗しました'
+      } finally
+      {
+        loading.value = false
+      }
+    } else
+    {
+      loading.value = false
+    }
+  })
+})
+
+// --- 2. ロジック: 合計計算 ---
+const totalAmount = computed(() =>
+{
+  return selectedMenus.value.reduce((sum, m) => sum + m.price, 0)
+})
+const totalDuration = computed(() =>
+{
+  return selectedMenus.value.reduce((sum, m) => sum + m.duration_min, 0)
+})
+
+// --- 3. ロジック: 担当可能スタッフの抽出 ---
+const availableStaffs = computed(() =>
+{
+  if (selectedMenus.value.length === 0) return []
+  const staffIdsPerMenu = selectedMenus.value.map(m => m.available_staff_ids)
+  const commonStaffIds = staffIdsPerMenu.reduce((a, b) => a.filter(c => b.includes(c)))
+
+  let candidates = staffs.value.filter(s => commonStaffIds.includes(s.id))
+  candidates = candidates.filter(s => s.is_working !== false)
+
+  if (isNewUser.value)
+  {
+    candidates = candidates.filter(s => s.roles.accepts_new_customer)
+  }
+
+  return candidates
+})
+
+// --- モーダル操作 ---
+const openBookingModal = () =>
+{
+  if (selectedMenus.value.length === 0)
+  {
+    alert('メニューを選択してください')
     return
   }
-  selectedMenu.value = menu
+
+  if (availableStaffs.value.length > 0)
+  {
+    selectedStaffId.value = availableStaffs.value[0].id
+  } else
+  {
+    selectedStaffId.value = ''
+  }
+
+  customerNote.value = '' // 👈 メモをリセット
   showModal.value = true
   errorMessage.value = ''
 }
 
-// 3. 予約確定処理 (メインロジック)
+const toggleMenu = (menu: Menu) =>
+{
+  const index = selectedMenus.value.findIndex(m => m.id === menu.id)
+  if (index === -1)
+  {
+    selectedMenus.value.push(menu)
+  } else
+  {
+    selectedMenus.value.splice(index, 1)
+  }
+}
+
+const isSelected = (menu: Menu) => selectedMenus.value.some(m => m.id === menu.id)
+
+// --- 4. 予約確定処理 ---
 const submitReservation = async () =>
 {
-  if (!selectedMenu.value || !reservationDate.value || !currentUser.value) return
+  if (!reservationDate.value || !currentUser.value || !selectedStaffId.value) return
 
   processing.value = true
   errorMessage.value = ''
 
   try
   {
-    // 時間計算
     const startDate = new Date(reservationDate.value)
-    const duration = selectedMenu.value.duration_min
-    const endDate = new Date(startDate.getTime() + duration * 60000)
+    const now = new Date()
 
+    if (startDate < now)
+    {
+      throw new Error('過去の日時は選択できません。未来の日時を指定してください。')
+    }
+
+    const duration = totalDuration.value
+    const endDate = new Date(startDate.getTime() + duration * 60000)
     const startTimestamp = Timestamp.fromDate(startDate)
     const endTimestamp = Timestamp.fromDate(endDate)
 
-    // -----------------------------------------------------
-    // 🧠 スタッフ自動割当ロジック (テトリス判定)
-    // -----------------------------------------------------
+    // 予約数制限チェック
+    const limitQ = query(
+      collection(db, 'reservations'),
+      where('customer_id', '==', currentUser.value.uid),
+      where('start_at', '>=', Timestamp.now()),
+      where('status', '!=', 'cancelled')
+    )
+    const limitSnapshot = await getDocs(limitQ)
 
-    // A. このメニューを担当できるスタッフ一覧
-    const candidateStaffIds = selectedMenu.value.available_staff_ids
+    if (limitSnapshot.size >= 3)
+    {
+      throw new Error('予約数の上限(3件)に達しています。\nマイページから既存の予約を確認してください。')
+    }
 
-    // B. 指定された時間帯に「すでに予約が入っている」予約データを取得
-    // (開始時間が希望終了時間より前 かつ 終了時間が希望開始時間より後)
+    // 重複チェック
     const q = query(
       collection(db, 'reservations'),
       where('start_at', '<', endTimestamp),
@@ -101,61 +231,49 @@ const submitReservation = async () =>
     )
     const snapshot = await getDocs(q)
 
-    // C. 予約が入っているスタッフIDをリストアップ
-    const busyStaffIds = new Set<string>()
+    let isBusy = false
     snapshot.forEach(doc =>
     {
       const data = doc.data()
-      // キャンセルされていない予約のスタッフを除外対象にする
-      if (data.status !== 'cancelled' && data.staff_id)
+      if (data.status !== 'cancelled' && data.staff_id === selectedStaffId.value)
       {
-        busyStaffIds.add(data.staff_id)
+        isBusy = true
       }
     })
 
-    // D. 「担当可能」かつ「忙しくない」スタッフを探す
-    const availableStaffId = candidateStaffIds.find(id => !busyStaffIds.has(id))
-
-    if (!availableStaffId)
+    if (isBusy)
     {
-      throw new Error('申し訳ありません。指定された日時は満席です。')
+      throw new Error('申し訳ありません。指定された日時は担当者が満席です。')
     }
 
-    // -----------------------------------------------------
-    // 📝 予約データの作成
-    // -----------------------------------------------------
+    // 予約登録
+    await addDoc(collection(db, 'reservations'), {
+      customer_id: customerProfile.value?.id || currentUser.value.uid,
+      customer_name: customerProfile.value?.name_kana || 'WEB予約ゲスト',
+      customer_phone: currentUser.value.email?.split('@')[0] || 'unknown',
 
-    // DBスキーマ定義に合わせてデータを作成
-    const reservationData = {
-      customer_id: currentUser.value.uid, // 簡易的にAuthIDを使用（本来はusersテーブル参照）
-      customer_phone: currentUser.value.email?.replace('@local.booking-system', '') || 'unknown',
-      staff_id: availableStaffId,
-
+      staff_id: selectedStaffId.value,
       start_at: startTimestamp,
       end_at: endTimestamp,
 
-      // メニューのスナップショット保存
-      menu_items: [{
-        id: selectedMenu.value.id,
-        title: selectedMenu.value.title,
-        price: selectedMenu.value.price,
-        duration: selectedMenu.value.duration_min
-      }],
-      total_price: selectedMenu.value.price,
-      total_duration_min: selectedMenu.value.duration_min,
+      menu_items: selectedMenus.value.map(m => ({
+        title: m.title,
+        price: m.price,
+        duration: m.duration_min
+      })),
+      total_price: totalAmount.value,
+      total_duration_min: totalDuration.value,
 
-      source: 'web', // WEB予約判別用
-
-      status: 'confirmed',
+      source: 'web',
+      status: 'pending',
+      note: customerNote.value || '', // 👈 メモを保存
       created_at: Timestamp.now()
-    }
+    })
 
-    // Firestoreに書き込み
-    await addDoc(collection(db, 'reservations'), reservationData)
-
-    alert('予約が完了しました！')
+    alert('予約リクエストを送信しました！\nお店からの確定をお待ちください。')
     showModal.value = false
     reservationDate.value = ''
+    selectedMenus.value = []
 
   } catch (error: any)
   {
@@ -170,38 +288,95 @@ const submitReservation = async () =>
 
 <template>
   <div class="home-container">
-    <h2>メニュー一覧</h2>
 
     <p v-if="loading" class="loading">読み込み中...</p>
 
-    <ul v-else class="menu-list">
-      <li v-for="menu in menus" :key="menu.id" class="menu-item">
-        <div class="menu-info">
-          <span class="menu-title">{{ menu.title }}</span>
-          <div class="menu-meta">
-            <span class="menu-duration">⏱ {{ menu.duration_min }}分</span>
-            <span class="menu-price">¥{{ menu.price.toLocaleString() }}</span>
+    <div v-else-if="currentUser">
+      <h2>メニュー選択</h2>
+
+      <div class="user-status">
+        <p v-if="customerProfile" class="existing">
+          ようこそ <strong>{{ customerProfile.name_kana }}</strong> 様
+        </p>
+        <p v-else class="new">
+          ようこそ ゲスト 様 (新規)
+        </p>
+      </div>
+
+      <ul class="menu-list">
+        <li
+          v-for="menu in menus"
+          :key="menu.id"
+          class="menu-item"
+          :class="{ active: isSelected(menu) }"
+          @click="toggleMenu(menu)">
+          <div class="check-icon">{{ isSelected(menu) ? '✅' : '⬜' }}</div>
+          <div class="menu-info">
+            <span class="menu-title">{{ menu.title }}</span>
+            <div class="menu-meta">
+              <span class="menu-duration">⏱ {{ menu.duration_min }}分</span>
+              <span class="menu-price">¥{{ menu.price.toLocaleString() }}</span>
+            </div>
           </div>
+        </li>
+      </ul>
+
+      <div class="bottom-action" v-if="selectedMenus.length > 0">
+        <div class="summary">
+          <span>合計: <strong>{{ totalDuration }}分</strong></span>
+          <span class="total-price">¥{{ totalAmount.toLocaleString() }}</span>
         </div>
-        <button class="book-btn" @click="openBookingModal(menu)">予約する</button>
-      </li>
-    </ul>
+        <button class="book-btn" @click="openBookingModal">
+          予約へ進む
+        </button>
+      </div>
+    </div>
+
+    <div v-else class="login-prompt">
+      <div class="prompt-card">
+        <h2>ようこそ！</h2>
+        <p>WEB予約を利用するにはログイン（または会員登録）が必要です。</p>
+        <button class="go-login-btn" @click="router.push('/login')">ログイン / 新規登録</button>
+      </div>
+    </div>
 
     <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
       <div class="modal-content">
-        <h3>予約情報の入力</h3>
-        <p class="modal-menu-name">{{ selectedMenu?.title }}</p>
+        <h3>予約内容の確認</h3>
+
+        <div class="selected-list">
+          <p v-for="m in selectedMenus" :key="m.id">・{{ m.title }}</p>
+        </div>
+
+        <div class="form-group">
+          <label>担当スタッフ指名</label>
+          <select v-model="selectedStaffId">
+            <option v-for="s in availableStaffs" :key="s.id" :value="s.id">
+              {{ s.name }} ({{ s.display_name }})
+            </option>
+          </select>
+          <p v-if="availableStaffs.length === 0" class="warn-text">
+            ※ 選択されたメニューの組み合わせを担当できるスタッフがいません。<br>
+            (または新規のお客様に対応できるスタッフがいません)
+          </p>
+        </div>
 
         <div class="form-group">
           <label>日時を選択:</label>
-          <input type="datetime-local" v-model="reservationDate" />
+          <input type="datetime-local" v-model="reservationDate" :min="minDateTime" />
+        </div>
+
+        <div class="form-group">
+          <label>ご要望・メモ (任意)</label>
+          <textarea v-model="customerNote" placeholder="髪型の希望や、伝えたいことがあれば入力してください"></textarea>
         </div>
 
         <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>
 
         <div class="modal-actions">
           <button class="cancel-btn" @click="showModal = false" :disabled="processing">キャンセル</button>
-          <button class="confirm-btn" @click="submitReservation" :disabled="!reservationDate || processing">
+          <button class="confirm-btn" @click="submitReservation"
+            :disabled="!reservationDate || !selectedStaffId || processing">
             {{ processing ? '処理中...' : '確定する' }}
           </button>
         </div>
@@ -214,88 +389,169 @@ const submitReservation = async () =>
 .home-container {
   max-width: 600px;
   margin: 0 auto;
-  padding-bottom: 2rem;
+  padding-bottom: 6rem;
 }
 
 h2 {
   border-bottom: 2px solid #eee;
   padding-bottom: 0.5rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+  text-align: center;
 }
 
 .loading {
   text-align: center;
   color: #666;
+  margin-top: 2rem;
 }
 
-/* メニューリスト */
+/* 未ログイン時の表示 */
+.login-prompt {
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.prompt-card {
+  background: #f8f9fa;
+  padding: 2rem;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+}
+
+.go-login-btn {
+  background: #42b883;
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: bold;
+  border-radius: 30px;
+  cursor: pointer;
+  margin-top: 1.5rem;
+  box-shadow: 0 4px 6px rgba(66, 184, 131, 0.3);
+}
+
+.go-login-btn:hover {
+  background: #3aa876;
+  transform: translateY(-2px);
+}
+
+.user-status {
+  background: #f9f9f9;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  border: 1px solid #eee;
+  font-size: 0.9rem;
+}
+
+.existing {
+  color: #2c3e50;
+}
+
+.new {
+  color: #27ae60;
+  font-weight: bold;
+}
+
 .menu-list {
   list-style: none;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.8rem;
 }
 
 .menu-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 1rem;
   padding: 1rem;
-  border: 1px solid #eee;
+  border: 2px solid #eee;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.menu-item.active {
+  border-color: #42b883;
+  background-color: #f0fff9;
+}
+
+.check-icon {
+  font-size: 1.5rem;
 }
 
 .menu-info {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.2rem;
+  flex: 1;
 }
 
 .menu-title {
   font-weight: bold;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .menu-meta {
   display: flex;
   gap: 1rem;
-  align-items: center;
-  margin-top: 0.2rem;
-}
-
-.menu-duration {
   font-size: 0.9rem;
   color: #555;
-  background: #f0f0f0;
-  padding: 2px 6px;
-  border-radius: 4px;
 }
 
 .menu-price {
   font-weight: bold;
   color: #2c3e50;
-  font-size: 1.1rem;
+}
+
+.bottom-action {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: white;
+  border-top: 1px solid #ddd;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  align-items: center;
+  z-index: 50;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9rem;
+}
+
+.total-price {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #e74c3c;
 }
 
 .book-btn {
-  background-color: #3498db;
+  background-color: #42b883;
   color: white;
   border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 4px;
-  cursor: pointer;
+  padding: 0.8rem 2rem;
+  border-radius: 30px;
   font-weight: bold;
-  white-space: nowrap;
+  font-size: 1.1rem;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(66, 184, 131, 0.3);
 }
 
 .book-btn:hover {
-  background-color: #2980b9;
+  background-color: #3aa876;
+  transform: translateY(-2px);
 }
 
-/* モーダル */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -316,14 +572,20 @@ h2 {
   width: 90%;
   max-width: 400px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
-.modal-menu-name {
-  font-weight: bold;
+.selected-list {
+  background: #f9f9f9;
+  padding: 1rem;
+  border-radius: 4px;
   margin-bottom: 1.5rem;
-  color: #333;
-  border-left: 4px solid #3498db;
-  padding-left: 10px;
+}
+
+.selected-list p {
+  margin: 0.2rem 0;
+  font-weight: bold;
 }
 
 .form-group {
@@ -333,11 +595,28 @@ h2 {
   gap: 0.5rem;
 }
 
-input[type="datetime-local"] {
+.warn-text {
+  color: #e74c3c;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+input,
+select {
   padding: 0.8rem;
   font-size: 1.1rem;
   border: 1px solid #ccc;
   border-radius: 4px;
+}
+
+/* テキストエリアのスタイル */
+textarea {
+  padding: 0.8rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  resize: vertical;
+  min-height: 80px;
 }
 
 .error-msg {

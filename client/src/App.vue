@@ -10,15 +10,12 @@ const router = useRouter()
 const route = useRoute()
 
 const isMenuOpen = ref(false)
-
-// 管理画面かどうか判定
 const isAdminPage = computed(() => route.path.startsWith('/admin'))
 
-// ユーザーIDの表示整形 (メールアドレスの @ 以降をカット)
+// ID整形
 const formatUserId = (email: string | null | undefined) =>
 {
   if (!email) return ''
-  // 電話番号ログイン(擬似メアド)の場合、@の前だけを表示
   return email.split('@')[0]
 }
 
@@ -49,88 +46,104 @@ const handleLogout = async () =>
 </script>
 
 <template>
-  <header>
-    <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
-      <h1>
-        <RouterLink to="/" class="logo-link" @click="closeMenu">💈 美理容予約システム</RouterLink>
-      </h1>
+  <div class="app-layout">
+    <header>
+      <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
+        <h1>
+          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 美理容予約システム</RouterLink>
+        </h1>
 
-      <button class="hamburger-btn" @click="toggleMenu" :class="{ active: isMenuOpen }">
-        <span class="bar"></span>
-        <span class="bar"></span>
-        <span class="bar"></span>
-      </button>
+        <button class="hamburger-btn" @click="toggleMenu" :class="{ active: isMenuOpen }">
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+        </button>
 
-      <nav class="nav-menu" :class="{ open: isMenuOpen }">
-        <div v-if="userStore.user" class="menu-group">
-          <span class="user-email">{{ formatUserId(userStore.user.email || userStore.user.phoneNumber) }}</span>
+        <nav class="nav-menu" :class="{ open: isMenuOpen }">
+          <div v-if="userStore.user" class="menu-group">
+            <span class="user-email">{{ formatUserId(userStore.user.email || userStore.user.phoneNumber) }}</span>
+            <button @click="handleLogout" class="logout-btn">ログアウト</button>
+            <RouterLink to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ</RouterLink>
+          </div>
+          <RouterLink v-else to="/login" class="nav-item login-btn" @click="closeMenu">ログイン / 登録</RouterLink>
+        </nav>
 
-          <button @click="handleLogout" class="logout-btn">ログアウト</button>
-          <RouterLink to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ</RouterLink>
-        </div>
+        <div v-if="isMenuOpen" class="menu-overlay" @click="closeMenu"></div>
+      </div>
+    </header>
 
-        <RouterLink v-else to="/login" class="nav-item login-btn" @click="closeMenu">ログイン / 登録</RouterLink>
-      </nav>
-
-      <div v-if="isMenuOpen" class="menu-overlay" @click="closeMenu"></div>
-    </div>
-  </header>
-
-  <main :class="[isAdminPage ? 'container-fluid' : 'container']">
-    <RouterView />
-  </main>
+    <main :class="[isAdminPage ? 'container-fluid' : 'container']">
+      <RouterView />
+    </main>
+  </div>
 </template>
 
-<style scoped>
-/* ベース設定 */
-.container {
-  max-width: 1024px;
-  margin: 0 auto;
-  padding: 0 1rem;
-}
-
-/* 管理画面用フル幅コンテナ */
-.container-fluid {
-  width: 100%;
+<style>
+html,
+body,
+#app {
+  height: 100%;
   margin: 0;
-  /* padding: 0;  <-- ここで0にするとヘッダーも0になってしまうので削除 */
+  padding: 0;
+  overflow: hidden;
+  /* ブラウザ自体のスクロールを禁止 */
+}
+</style>
+
+<style scoped>
+/* アプリ全体のレイアウト */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
+/* ヘッダー */
 header {
   background-color: #333;
   color: white;
   height: 60px;
+  flex-shrink: 0;
   position: relative;
   z-index: 100;
 }
 
-/* ヘッダー内部のレイアウト */
+/* メイン: ここをスクロール可能エリアにする */
+main {
+  flex: 1;
+  overflow-y: auto;
+  /* 👈 変更: mainタグ自体をスクロールさせる */
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* コンテナ設定 */
+.container {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 1rem;
+  /* height: 100%;  <-- 削除 */
+  /* overflow-y: auto; <-- 削除 */
+  box-sizing: border-box;
+}
+
+.container-fluid {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+}
+
 .header-inner {
   display: flex;
   justify-content: space-between;
   align-items: center;
   height: 100%;
+  padding: 0 2rem !important;
   box-sizing: border-box;
-  /* 重要: パディングを含めて幅100%にする */
-  padding: 0 2rem;
-  /* 常に左右に余白を持たせる */
 }
 
-/* もし container クラスがついた場合の上書き (念のため) */
-.header-inner.container {
-  padding: 0 1rem;
-}
-
-/* メインコンテンツの調整 */
-main.container-fluid {
-  padding: 0;
-  /* メインコンテンツは余白なしでOK（内部のパネルで余白をとるため） */
-}
-
-main.container {
-  padding: 1rem;
-}
-
+/* --- 以下、既存のデザイン --- */
 .logo-link {
   color: white;
   text-decoration: none;
@@ -139,7 +152,6 @@ main.container {
   white-space: nowrap;
 }
 
-/* --- デスクトップ用メニュー設定 --- */
 .nav-menu {
   display: flex;
   align-items: center;
@@ -207,13 +219,10 @@ main.container {
   display: none;
 }
 
-/* --- 📱 スマホ対応 (768px以下) --- */
 @media (max-width: 768px) {
   .header-inner {
-    padding: 0 1rem;
+    padding: 0 1rem !important;
   }
-
-  /* スマホでは少し狭く */
 
   .hamburger-btn {
     display: flex;
