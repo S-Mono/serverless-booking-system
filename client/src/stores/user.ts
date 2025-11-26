@@ -1,13 +1,14 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { User } from '@supabase/supabase-js'
+// 👇 ここを変更 (Supabase -> Firebase)
+import type { User } from 'firebase/auth'
 
-export const useUserStore = defineStore('user', () => {
-  // ユーザー情報を入れる変数（最初は空っぽ）
+export const useUserStore = defineStore('user', () =>
+{
   const user = ref<User | null>(null)
 
-  // ユーザー情報をセットする関数
-  const setUser = (newUser: User | null) => {
+  const setUser = (newUser: User | null) =>
+  {
     user.value = newUser
   }
 

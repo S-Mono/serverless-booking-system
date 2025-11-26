@@ -14,7 +14,8 @@
     "type-check": "vue-tsc --build"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.84.0",
+    "@line/liff": "^2.27.3",
+    "firebase": "^12.6.0",
     "pinia": "^3.0.3",
     "vue": "^3.5.22",
     "vue-router": "^4.6.3"
