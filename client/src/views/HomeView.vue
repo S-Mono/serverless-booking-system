@@ -15,11 +15,12 @@ interface Menu
   description?: string
 }
 
+// 👇 display_nameを追加
 interface Staff
 {
   id: string
   name: string
-  display_name: string // 👈 追加！
+  display_name: string
   roles: {
     accepts_new_customer: boolean
     accepts_free_booking: boolean
@@ -61,9 +62,10 @@ const minDateTime = computed(() =>
 // --- 1. データ取得 & 名寄せ ---
 const checkCustomerStatus = async (user: any) =>
 {
-  if (!user || !user.email) return
   // 🔒 安全にアクセス (?.)
-  const phoneNumber = user.email?.split('@')[0]
+  if (!user || !user.email) return
+  const phoneNumber = user.email.split('@')[0]
+
   if (!phoneNumber) return
 
   try
@@ -72,9 +74,9 @@ const checkCustomerStatus = async (user: any) =>
     const snapshot = await getDocs(q)
     if (!snapshot.empty)
     {
-      const data = snapshot.docs[0].data()
+      const data = snapshot.docs[0]!.data()
       customerProfile.value = {
-        id: snapshot.docs[0].id,
+        id: snapshot.docs[0]!.id,
         name_kana: data.name_kana,
         is_existing_customer: data.is_existing_customer
       }
@@ -146,7 +148,7 @@ const availableStaffs = computed(() =>
 const openBookingModal = () =>
 {
   if (selectedMenus.value.length === 0) return alert('メニューを選択してください')
-  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0].id
+  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0]!.id
   else selectedStaffId.value = ''
   customerNote.value = ''
   showModal.value = true
@@ -184,9 +186,10 @@ const submitReservation = async () =>
     // 🔒 安全にメールアドレスを取得
     const email = currentUser.value?.email || ''
     const customerPhone = email.split('@')[0] || 'unknown'
+    const uid = currentUser.value?.uid || 'unknown'
 
     await addDoc(collection(db, 'reservations'), {
-      customer_id: customerProfile.value?.id || currentUser.value.uid,
+      customer_id: customerProfile.value?.id || uid,
       customer_name: customerProfile.value?.name_kana || 'WEB予約ゲスト',
       customer_phone: customerPhone,
 

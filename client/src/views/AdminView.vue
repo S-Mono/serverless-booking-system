@@ -81,10 +81,10 @@ const initData = async (fetchMaster = true) =>
       if (configSnap.exists())
       {
         shopConfig.value = configSnap.data() as ShopConfig
-        // 🔒 安全なアクセスに修正
+        // 🔒 安全なアクセス
         const hours = shopConfig.value.business_hours || { start: '09:00', end: '19:00' }
-        openHour.value = parseInt(hours.start.split(':')[0], 10)
-        closeHour.value = parseInt(hours.end.split(':')[0], 10)
+        if (hours.start) openHour.value = parseInt(hours.start.split(':')[0]!, 10)
+        if (hours.end) closeHour.value = parseInt(hours.end.split(':')[0]!, 10)
       }
     }
 
@@ -108,14 +108,15 @@ const initData = async (fetchMaster = true) =>
   } catch (e) { console.error(e); loading.value = false }
 }
 
-// ... (submitReservation, deleteReservation, approveReservation などは変更なし) ...
 const submitReservation = async () =>
 {
   if (!newReservation.value.menu_id) return
   const menu = menus.value.find(m => m.id === newReservation.value.menu_id)
-  if (!menu) return
+  if (!menu) return // 🔒 安全策: メニューが見つからない場合は中断
+
   const startDate = new Date(newReservation.value.start_time)
   const endDate = new Date(startDate.getTime() + menu.duration_min * 60000)
+
   const payload = {
     staff_id: newReservation.value.staff_id,
     start_at: Timestamp.fromDate(startDate),
@@ -127,6 +128,7 @@ const submitReservation = async () =>
     note: newReservation.value.note || '',
     status: 'confirmed'
   }
+
   try
   {
     if (isEditing.value && editingId.value)
@@ -141,13 +143,17 @@ const submitReservation = async () =>
     showModal.value = false
   } catch (e) { console.error(e); alert('処理失敗') }
 }
+
 const confirmDelete = (id: string) => { deleteTargetId.value = id; showDeleteModal.value = true; showDetailModal.value = false }
 const executeDelete = async () => { if (!deleteTargetId.value) return; try { await deleteDoc(doc(db, 'reservations', deleteTargetId.value)); showDeleteModal.value = false; deleteTargetId.value = null } catch (e) { alert('削除失敗') } }
 const openReservationDetail = (res: Reservation) => { selectedReservation.value = res; showDetailModal.value = true }
 const approveReservation = async (id: string) => { try { await updateDoc(doc(db, 'reservations', id), { status: 'confirmed' }); alert('確定しました'); showDetailModal.value = false } catch (e) { alert('失敗') } }
+
 const openEditModal = (res: Reservation) =>
 {
-  const matchedMenu = menus.value.find(m => m.title === res.menu_items[0].title)
+  // メニューが存在するかチェック
+  const matchedMenu = menus.value.find(m => m.title === res.menu_items[0]?.title)
+
   newReservation.value = {
     staff_id: res.staff_id,
     start_time: toLocalISOString(res.start_at.toDate()),
@@ -270,27 +276,34 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         <button @click="$router.push('/admin/settings')" class="settings-link-btn">⚙ 設定</button>
       </div>
     </header>
+
     <div v-if="loading" class="loading">Loading...</div>
+
     <div v-else class="admin-body">
+
       <div class="panel-left" :class="{ collapsed: !isSidebarOpen }">
         <div class="panel-header">
           <template v-if="isSidebarOpen">
-            <h3>予約リスト</h3><button class="toggle-btn" @click="isSidebarOpen = false">◀</button>
+            <h3>予約リスト</h3>
+            <button class="toggle-btn" @click="isSidebarOpen = false" title="閉じる">◀</button>
           </template>
-          <div v-else class="collapsed-content" @click="isSidebarOpen = true"><button
-              class="toggle-btn open">▶</button><span
-              class="vertical-text">予約リスト</span></div>
+          <div v-else class="collapsed-content" @click="isSidebarOpen = true">
+            <button class="toggle-btn open">▶</button>
+            <span class="vertical-text">予約リスト</span>
+          </div>
         </div>
+
         <div v-if="isSidebarOpen" class="kanban-list-container">
           <div class="kanban-list">
             <transition-group name="list">
               <div v-for="res in reservations" :key="res.id" class="kanban-card" :class="getReservationClass(res)"
                 @click="openReservationDetail(res)">
                 <div class="card-left">
-                  <div class="time-box"><span class="time">{{ formatTime(res.start_at) }}</span><span
-                      v-if="res.status === 'pending'" class="status-icon-pending">未</span><span v-else
-                      class="source-icon">{{
-                        res.source === 'phone' ? '📞' : '🌐' }}</span></div>
+                  <div class="time-box">
+                    <span class="time">{{ formatTime(res.start_at) }}</span>
+                    <span v-if="res.status === 'pending'" class="status-icon-pending">未</span>
+                    <span v-else class="source-icon">{{ res.source === 'phone' ? '📞' : '🌐' }}</span>
+                  </div>
                 </div>
                 <div class="details">
                   <div class="menu-title">{{ res.menu_items[0]?.title }}</div>
@@ -306,6 +319,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
           </div>
         </div>
       </div>
+
       <div class="panel-right">
         <div class="calendar-bar">
           <button class="date-nav-btn" @click="changeDate(-1)">◀ 前日</button>
@@ -323,6 +337,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
           <button class="date-nav-btn" @click="changeDate(1)">翌日 ▶</button>
           <button class="today-btn" @click="selectedDate = new Date()">今日</button>
         </div>
+
         <div class="timeline-container">
           <div class="timeline-header">
             <div class="staff-header-cell"></div>
@@ -344,7 +359,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
                       :style="{ left: `${getLeftPosition(res.start_at)}%`, width: `${getWidth(res.start_at, res.end_at)}%` }"
                       :title="getTooltipText(res)" @mousedown.stop @click.stop="openReservationDetail(res)">
                       <span class="bar-text"><span v-if="res.status === 'pending'">【未】</span>{{ res.menu_items[0]?.title
-                      }} <span v-if="res.customer_name">/ {{ res.customer_name }}</span></span>
+                        }} <span v-if="res.customer_name">/ {{ res.customer_name }}</span></span>
                     </div>
                   </template>
                 </transition-group>
@@ -356,11 +371,12 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         </div>
       </div>
     </div>
+
     <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
       <div class="modal-content">
         <div class="modal-header-row">
-          <h3>{{ isEditing ? '予約の編集' : '新規予約 (電話受付)' }}</h3><button class="close-x-btn"
-            @click="showModal = false">×</button>
+          <h3>{{ isEditing ? '予約の編集' : '新規予約 (電話受付)' }}</h3>
+          <button class="close-x-btn" @click="showModal = false">×</button>
         </div>
         <div class="form-group"><label>担当スタッフ</label><select v-model="newReservation.staff_id" disabled>
             <option v-for="s in staffs" :key="s.id" :value="s.id">{{ s.name }}</option>
@@ -378,20 +394,24 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
         </div>
-        <div class="modal-actions right-align"><button class="save-btn" @click="submitReservation">{{ isEditing ? '更新する'
-          :
-          '登録する' }}</button></div>
+        <div class="modal-actions right-align">
+          <button class="save-btn" @click="submitReservation">{{ isEditing ? '更新する' : '登録する' }}</button>
+        </div>
       </div>
     </div>
+
     <div v-if="showDetailModal && selectedReservation" class="modal-overlay" @click.self="showDetailModal = false">
       <div class="modal-content detail-modal">
         <div class="modal-header-row">
-          <h3>予約詳細</h3><button class="close-x-btn" @click="showDetailModal = false">×</button>
+          <h3>予約詳細</h3>
+          <button class="close-x-btn" @click="showDetailModal = false">×</button>
         </div>
+
         <div v-if="selectedReservation.status === 'pending'" class="pending-alert">
-          <p>⚠️ <strong>WEBからの仮予約です</strong></p><button class="approve-btn"
-            @click="approveReservation(selectedReservation.id)">✅ 予約を確定する</button>
+          <p>⚠️ <strong>WEBからの仮予約です</strong></p>
+          <button class="approve-btn" @click="approveReservation(selectedReservation.id)">✅ 予約を確定する</button>
         </div>
+
         <div class="detail-body">
           <div class="detail-row"><span class="label">日時:</span> {{ formatTime(selectedReservation.start_at) }} - {{
             formatTime(selectedReservation.end_at) }}</div>
@@ -400,20 +420,23 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
           </div>
           <div class="detail-row"><span class="label">電話:</span> {{ selectedReservation.customer_phone || 'なし' }}</div>
           <div class="detail-row"><span class="label">担当:</span> {{ getStaffName(selectedReservation.staff_id) }}</div>
-          <div class="detail-row"><span class="label">状態:</span> <span
-              :class="selectedReservation.status === 'pending' ? 'status-pending' : 'status-confirmed'">{{
-                selectedReservation.status === 'pending' ? '仮予約' : '確定済み' }}</span></div>
+          <div class="detail-row"><span class="label">受付:</span> <span
+              :class="selectedReservation.source === 'phone' ? 'tag-phone' : 'tag-web'">{{ selectedReservation.source
+                ===
+                'phone' ? '電話予約' : 'WEB予約' }}</span></div>
           <div class="detail-note">
             <div class="label">メモ:</div>
             <div class="note-content">{{ selectedReservation.note || '（なし）' }}</div>
           </div>
         </div>
+
         <div class="modal-actions split">
           <button class="delete-confirm-btn" @click="confirmDelete(selectedReservation.id)">🗑️ 削除</button>
           <button class="edit-btn" @click="openEditModal(selectedReservation)">✏️ 編集</button>
         </div>
       </div>
     </div>
+
     <div v-if="showDeleteModal" class="modal-overlay" @click.self="showDeleteModal = false">
       <div class="modal-content delete-modal">
         <h3>予約の削除</h3>
@@ -424,11 +447,12 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         </div>
       </div>
     </div>
+
   </div>
 </template>
 
 <style scoped>
-/* (CSSは前回提示したcompact & full-width版をそのまま使用しています) */
+/* ... (既存CSSはそのまま) ... */
 .admin-container {
   height: 100vh;
   display: flex;
@@ -1015,6 +1039,12 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 
 .close-x-btn:hover {
   color: #333;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
 }
 
 .form-group {

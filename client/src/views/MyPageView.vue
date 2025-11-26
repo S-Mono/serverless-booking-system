@@ -30,12 +30,15 @@ const fetchReservations = async (userId: string) =>
 
     reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
 
-    const phone = currentUser.value.email?.split('@')[0]
+    // 🔒 修正箇所: 安全にアクセス
+    const email = currentUser.value?.email || ''
+    const phone = email.split('@')[0]
+
     if (phone)
     {
       const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
       const custSnap = await getDocs(custQ)
-      if (!custSnap.empty) nameKana.value = custSnap.docs[0].data().name_kana
+      if (!custSnap.empty) nameKana.value = custSnap.docs[0]!.data().name_kana
     }
   } catch (error)
   {
@@ -52,7 +55,9 @@ const saveProfile = async () =>
   isSavingProfile.value = true
   try
   {
-    const phone = currentUser.value.email?.split('@')[0] || ''
+    const email = currentUser.value?.email || ''
+    const phone = email.split('@')[0] || ''
+
     await setDoc(doc(db, 'customers', currentUser.value.uid), {
       name_kana: nameKana.value, phone_number: phone, is_existing_customer: true, updated_at: Timestamp.now()
     }, { merge: true })
