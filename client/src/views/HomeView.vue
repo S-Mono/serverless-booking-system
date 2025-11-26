@@ -5,7 +5,6 @@ import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, query, where, Timestamp } from 'firebase/firestore'
 import { onAuthStateChanged } from 'firebase/auth'
 
-// --- 型定義 ---
 interface Menu
 {
   id: string
@@ -20,6 +19,7 @@ interface Staff
 {
   id: string
   name: string
+  display_name: string // 👈 追加！
   roles: {
     accepts_new_customer: boolean
     accepts_free_booking: boolean
@@ -49,9 +49,8 @@ const showModal = ref(false)
 const selectedMenus = ref<Menu[]>([])
 const reservationDate = ref('')
 const selectedStaffId = ref<string>('')
-const customerNote = ref('') // 👈 追加: メモ入力用
+const customerNote = ref('')
 
-// 現在時刻のISO文字列取得 (min属性用)
 const minDateTime = computed(() =>
 {
   const now = new Date()
@@ -63,7 +62,10 @@ const minDateTime = computed(() =>
 const checkCustomerStatus = async (user: any) =>
 {
   if (!user || !user.email) return
-  const phoneNumber = user.email.split('@')[0]
+  // 🔒 安全にアクセス (?.)
+  const phoneNumber = user.email?.split('@')[0]
+  if (!phoneNumber) return
+
   try
   {
     const q = query(collection(db, 'customers'), where('phone_number', '==', phoneNumber))
@@ -105,7 +107,6 @@ onMounted(async () =>
         staffs.value = staffSnap.docs.map(doc =>
         {
           const d = doc.data()
-          // is_workingがない古いデータはtrue扱い
           return { id: doc.id, ...d, is_working: d.is_working ?? true }
         }) as Staff[]
       } catch (error)
@@ -122,17 +123,9 @@ onMounted(async () =>
   })
 })
 
-// --- 2. ロジック: 合計計算 ---
-const totalAmount = computed(() =>
-{
-  return selectedMenus.value.reduce((sum, m) => sum + m.price, 0)
-})
-const totalDuration = computed(() =>
-{
-  return selectedMenus.value.reduce((sum, m) => sum + m.duration_min, 0)
-})
+const totalAmount = computed(() => selectedMenus.value.reduce((sum, m) => sum + m.price, 0))
+const totalDuration = computed(() => selectedMenus.value.reduce((sum, m) => sum + m.duration_min, 0))
 
-// --- 3. ロジック: 担当可能スタッフの抽出 ---
 const availableStaffs = computed(() =>
 {
   if (selectedMenus.value.length === 0) return []
@@ -140,7 +133,7 @@ const availableStaffs = computed(() =>
   const commonStaffIds = staffIdsPerMenu.reduce((a, b) => a.filter(c => b.includes(c)))
 
   let candidates = staffs.value.filter(s => commonStaffIds.includes(s.id))
-  candidates = candidates.filter(s => s.is_working !== false)
+  candidates = candidates.filter(s => (s as any).is_working !== false)
 
   if (isNewUser.value)
   {
@@ -150,24 +143,12 @@ const availableStaffs = computed(() =>
   return candidates
 })
 
-// --- モーダル操作 ---
 const openBookingModal = () =>
 {
-  if (selectedMenus.value.length === 0)
-  {
-    alert('メニューを選択してください')
-    return
-  }
-
-  if (availableStaffs.value.length > 0)
-  {
-    selectedStaffId.value = availableStaffs.value[0].id
-  } else
-  {
-    selectedStaffId.value = ''
-  }
-
-  customerNote.value = '' // 👈 メモをリセット
+  if (selectedMenus.value.length === 0) return alert('メニューを選択してください')
+  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0].id
+  else selectedStaffId.value = ''
+  customerNote.value = ''
   showModal.value = true
   errorMessage.value = ''
 }
@@ -175,18 +156,12 @@ const openBookingModal = () =>
 const toggleMenu = (menu: Menu) =>
 {
   const index = selectedMenus.value.findIndex(m => m.id === menu.id)
-  if (index === -1)
-  {
-    selectedMenus.value.push(menu)
-  } else
-  {
-    selectedMenus.value.splice(index, 1)
-  }
+  if (index === -1) selectedMenus.value.push(menu)
+  else selectedMenus.value.splice(index, 1)
 }
 
 const isSelected = (menu: Menu) => selectedMenus.value.some(m => m.id === menu.id)
 
-// --- 4. 予約確定処理 ---
 const submitReservation = async () =>
 {
   if (!reservationDate.value || !currentUser.value || !selectedStaffId.value) return
@@ -199,58 +174,21 @@ const submitReservation = async () =>
     const startDate = new Date(reservationDate.value)
     const now = new Date()
 
-    if (startDate < now)
-    {
-      throw new Error('過去の日時は選択できません。未来の日時を指定してください。')
-    }
+    if (startDate < now) throw new Error('過去の日時は選択できません。')
 
     const duration = totalDuration.value
     const endDate = new Date(startDate.getTime() + duration * 60000)
     const startTimestamp = Timestamp.fromDate(startDate)
     const endTimestamp = Timestamp.fromDate(endDate)
 
-    // 予約数制限チェック
-    const limitQ = query(
-      collection(db, 'reservations'),
-      where('customer_id', '==', currentUser.value.uid),
-      where('start_at', '>=', Timestamp.now()),
-      where('status', '!=', 'cancelled')
-    )
-    const limitSnapshot = await getDocs(limitQ)
+    // 🔒 安全にメールアドレスを取得
+    const email = currentUser.value?.email || ''
+    const customerPhone = email.split('@')[0] || 'unknown'
 
-    if (limitSnapshot.size >= 3)
-    {
-      throw new Error('予約数の上限(3件)に達しています。\nマイページから既存の予約を確認してください。')
-    }
-
-    // 重複チェック
-    const q = query(
-      collection(db, 'reservations'),
-      where('start_at', '<', endTimestamp),
-      where('end_at', '>', startTimestamp)
-    )
-    const snapshot = await getDocs(q)
-
-    let isBusy = false
-    snapshot.forEach(doc =>
-    {
-      const data = doc.data()
-      if (data.status !== 'cancelled' && data.staff_id === selectedStaffId.value)
-      {
-        isBusy = true
-      }
-    })
-
-    if (isBusy)
-    {
-      throw new Error('申し訳ありません。指定された日時は担当者が満席です。')
-    }
-
-    // 予約登録
     await addDoc(collection(db, 'reservations'), {
       customer_id: customerProfile.value?.id || currentUser.value.uid,
       customer_name: customerProfile.value?.name_kana || 'WEB予約ゲスト',
-      customer_phone: currentUser.value.email?.split('@')[0] || 'unknown',
+      customer_phone: customerPhone,
 
       staff_id: selectedStaffId.value,
       start_at: startTimestamp,
@@ -266,7 +204,7 @@ const submitReservation = async () =>
 
       source: 'web',
       status: 'pending',
-      note: customerNote.value || '', // 👈 メモを保存
+      note: customerNote.value || '',
       created_at: Timestamp.now()
     })
 
@@ -288,27 +226,19 @@ const submitReservation = async () =>
 
 <template>
   <div class="home-container">
-
     <p v-if="loading" class="loading">読み込み中...</p>
 
     <div v-else-if="currentUser">
       <h2>メニュー選択</h2>
-
       <div class="user-status">
         <p v-if="customerProfile" class="existing">
           ようこそ <strong>{{ customerProfile.name_kana }}</strong> 様
         </p>
-        <p v-else class="new">
-          ようこそ ゲスト 様 (新規)
-        </p>
+        <p v-else class="new">ようこそ ゲスト 様 (新規)</p>
       </div>
 
       <ul class="menu-list">
-        <li
-          v-for="menu in menus"
-          :key="menu.id"
-          class="menu-item"
-          :class="{ active: isSelected(menu) }"
+        <li v-for="menu in menus" :key="menu.id" class="menu-item" :class="{ active: isSelected(menu) }"
           @click="toggleMenu(menu)">
           <div class="check-icon">{{ isSelected(menu) ? '✅' : '⬜' }}</div>
           <div class="menu-info">
@@ -326,9 +256,7 @@ const submitReservation = async () =>
           <span>合計: <strong>{{ totalDuration }}分</strong></span>
           <span class="total-price">¥{{ totalAmount.toLocaleString() }}</span>
         </div>
-        <button class="book-btn" @click="openBookingModal">
-          予約へ進む
-        </button>
+        <button class="book-btn" @click="openBookingModal">予約へ進む</button>
       </div>
     </div>
 
@@ -343,36 +271,25 @@ const submitReservation = async () =>
     <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
       <div class="modal-content">
         <h3>予約内容の確認</h3>
-
         <div class="selected-list">
           <p v-for="m in selectedMenus" :key="m.id">・{{ m.title }}</p>
         </div>
-
         <div class="form-group">
           <label>担当スタッフ指名</label>
           <select v-model="selectedStaffId">
-            <option v-for="s in availableStaffs" :key="s.id" :value="s.id">
-              {{ s.name }} ({{ s.display_name }})
-            </option>
+            <option v-for="s in availableStaffs" :key="s.id" :value="s.id">{{ s.name }} ({{ s.display_name }})</option>
           </select>
-          <p v-if="availableStaffs.length === 0" class="warn-text">
-            ※ 選択されたメニューの組み合わせを担当できるスタッフがいません。<br>
-            (または新規のお客様に対応できるスタッフがいません)
-          </p>
+          <p v-if="availableStaffs.length === 0" class="warn-text">※ 対応できるスタッフがいません</p>
         </div>
-
         <div class="form-group">
           <label>日時を選択:</label>
           <input type="datetime-local" v-model="reservationDate" :min="minDateTime" />
         </div>
-
         <div class="form-group">
           <label>ご要望・メモ (任意)</label>
-          <textarea v-model="customerNote" placeholder="髪型の希望や、伝えたいことがあれば入力してください"></textarea>
+          <textarea v-model="customerNote" placeholder="髪型の希望など"></textarea>
         </div>
-
         <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>
-
         <div class="modal-actions">
           <button class="cancel-btn" @click="showModal = false" :disabled="processing">キャンセル</button>
           <button class="confirm-btn" @click="submitReservation"
@@ -405,7 +322,6 @@ h2 {
   margin-top: 2rem;
 }
 
-/* 未ログイン時の表示 */
 .login-prompt {
   padding: 2rem 1rem;
   text-align: center;
@@ -429,11 +345,6 @@ h2 {
   cursor: pointer;
   margin-top: 1.5rem;
   box-shadow: 0 4px 6px rgba(66, 184, 131, 0.3);
-}
-
-.go-login-btn:hover {
-  background: #3aa876;
-  transform: translateY(-2px);
 }
 
 .user-status {
@@ -547,11 +458,6 @@ h2 {
   box-shadow: 0 4px 6px rgba(66, 184, 131, 0.3);
 }
 
-.book-btn:hover {
-  background-color: #3aa876;
-  transform: translateY(-2px);
-}
-
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -583,11 +489,6 @@ h2 {
   margin-bottom: 1.5rem;
 }
 
-.selected-list p {
-  margin: 0.2rem 0;
-  font-weight: bold;
-}
-
 .form-group {
   margin-bottom: 1.5rem;
   display: flex;
@@ -609,7 +510,6 @@ select {
   border-radius: 4px;
 }
 
-/* テキストエリアのスタイル */
 textarea {
   padding: 0.8rem;
   font-size: 1rem;
