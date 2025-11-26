@@ -9,7 +9,7 @@ interface Reservation
   id: string
   start_at: Timestamp
   menu_items: { title: string; price: number }[]
-  status: string
+  status: string // 'confirmed' | 'pending'
 }
 
 const reservations = ref<Reservation[]>([])
@@ -18,33 +18,24 @@ const currentUser = ref<any>(null)
 const nameKana = ref('')
 const isSavingProfile = ref(false)
 
-// 予約一覧の取得
 const fetchReservations = async (userId: string) =>
 {
   loading.value = true
   try
   {
-    const q = query(
-      collection(db, 'reservations'),
-      where('customer_id', '==', userId)
-    )
-
+    // 単純なクエリで取得してからクライアント側でソート (インデックスエラー回避)
+    const q = query(collection(db, 'reservations'), where('customer_id', '==', userId))
     const querySnapshot = await getDocs(q)
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
 
-    // クライアント側ソート
     reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
 
-    // プロフィール取得
     const phone = currentUser.value.email?.split('@')[0]
     if (phone)
     {
       const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
       const custSnap = await getDocs(custQ)
-      if (!custSnap.empty)
-      {
-        nameKana.value = custSnap.docs[0].data().name_kana
-      }
+      if (!custSnap.empty) nameKana.value = custSnap.docs[0].data().name_kana
     }
   } catch (error)
   {
@@ -55,7 +46,6 @@ const fetchReservations = async (userId: string) =>
   }
 }
 
-// プロフィールの保存
 const saveProfile = async () =>
 {
   if (!currentUser.value || !nameKana.value) return
@@ -64,23 +54,12 @@ const saveProfile = async () =>
   {
     const phone = currentUser.value.email?.split('@')[0] || ''
     await setDoc(doc(db, 'customers', currentUser.value.uid), {
-      name_kana: nameKana.value,
-      phone_number: phone,
-      is_existing_customer: true,
-      updated_at: Timestamp.now()
+      name_kana: nameKana.value, phone_number: phone, is_existing_customer: true, updated_at: Timestamp.now()
     }, { merge: true })
     alert('プロフィールを保存しました')
-  } catch (error)
-  {
-    console.error(error)
-    alert('保存失敗')
-  } finally
-  {
-    isSavingProfile.value = false
-  }
+  } catch (error) { console.error(error); alert('保存失敗') } finally { isSavingProfile.value = false }
 }
 
-// 予約キャンセル
 const cancelReservation = async (id: string) =>
 {
   if (!confirm('キャンセルしますか？')) return
@@ -89,14 +68,9 @@ const cancelReservation = async (id: string) =>
     await deleteDoc(doc(db, 'reservations', id))
     alert('予約をキャンセルしました')
     reservations.value = reservations.value.filter(res => res.id !== id)
-  } catch (error)
-  {
-    console.error(error)
-    alert('キャンセル失敗')
-  }
+  } catch (error) { console.error(error); alert('キャンセル失敗') }
 }
 
-// 初期化
 onMounted(() =>
 {
   onAuthStateChanged(auth, (user) =>
@@ -107,13 +81,10 @@ onMounted(() =>
   })
 })
 
-// 日付整形
 const formatDate = (ts: Timestamp) =>
 {
   const d = ts.toDate()
-  return d.toLocaleString('ja-JP', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short'
-  })
+  return d.toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' })
 }
 </script>
 
@@ -154,7 +125,10 @@ const formatDate = (ts: Timestamp) =>
               <li v-for="res in reservations" :key="res.id" class="reservation-item">
                 <div class="res-header">
                   <span class="date">{{ formatDate(res.start_at) }}</span>
-                  <span class="status-badge">予約確定</span>
+
+                  <span v-if="res.status === 'confirmed'" class="status-badge confirmed">予約確定</span>
+                  <span v-else-if="res.status === 'pending'" class="status-badge pending">お店の確認待ち</span>
+
                 </div>
                 <div class="res-body">
                   <div v-for="(item, index) in res.menu_items" :key="index" class="menu-item">
@@ -177,7 +151,6 @@ const formatDate = (ts: Timestamp) =>
 <style scoped>
 .mypage-container {
   max-width: 1024px;
-  /* 👈 幅を広げました */
   margin: 0 auto;
   padding: 2rem 1rem;
 }
@@ -190,16 +163,13 @@ const formatDate = (ts: Timestamp) =>
   color: #333;
 }
 
-/* --- グリッドレイアウト --- */
 .content-grid {
   display: grid;
   grid-template-columns: 300px 1fr;
-  /* 左300px, 右残り全部 */
   gap: 2rem;
   align-items: start;
 }
 
-/* 共通カードスタイル */
 .card {
   background: white;
   border: 1px solid #ddd;
@@ -217,7 +187,6 @@ const formatDate = (ts: Timestamp) =>
   padding-bottom: 0.5rem;
 }
 
-/* --- プロフィールエリア --- */
 .form-group label {
   display: block;
   font-weight: bold;
@@ -232,7 +201,6 @@ const formatDate = (ts: Timestamp) =>
   border-radius: 4px;
   font-size: 1rem;
   box-sizing: border-box;
-  /* はみ出し防止 */
 }
 
 .hint {
@@ -262,7 +230,6 @@ const formatDate = (ts: Timestamp) =>
   cursor: not-allowed;
 }
 
-/* --- 予約リストエリア --- */
 .loading,
 .no-data {
   text-align: center;
@@ -310,13 +277,25 @@ const formatDate = (ts: Timestamp) =>
   color: #333;
 }
 
+/* ステータスバッジ */
 .status-badge {
-  background: #42b883;
-  color: white;
   font-size: 0.8rem;
-  padding: 2px 8px;
+  padding: 4px 10px;
   border-radius: 12px;
+  font-weight: bold;
+  color: white;
 }
+
+.status-badge.confirmed {
+  background: #42b883;
+}
+
+/* 緑 */
+.status-badge.pending {
+  background: #e67e22;
+}
+
+/* オレンジ */
 
 .res-body {
   margin-bottom: 1rem;
@@ -357,14 +336,10 @@ const formatDate = (ts: Timestamp) =>
   color: white;
 }
 
-/* --- 📱 スマホ対応 (レスポンシブ) --- */
 @media (max-width: 768px) {
   .content-grid {
     grid-template-columns: 1fr;
-    /* 縦1列に変更 */
     gap: 1.5rem;
   }
-
-  /* スマホではプロフィールを下に、予約を上にしても良いかも（今回は順序そのまま） */
 }
 </style>
