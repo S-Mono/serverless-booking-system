@@ -118,6 +118,7 @@ const fetchAvailableSlots = async () =>
     const closeDate = new Date(targetDate); closeDate.setHours(closeTime, 0, 0, 0)
     const slots: Date[] = []
     const now = new Date().getTime()
+
     while (current.getTime() + (requiredDuration * 60000) <= closeDate.getTime())
     {
       const slotStart = current.getTime(); const slotEnd = slotStart + (requiredDuration * 60000)
@@ -161,24 +162,56 @@ const submitReservation = async () =>
   {
     const startDate = new Date(reservationDate.value); const now = new Date()
     if (startDate < now) throw new Error('過去の日時は選択できません。')
+
     const duration = totalDuration.value
     const endDate = new Date(startDate.getTime() + duration * 60000)
     const startTimestamp = Timestamp.fromDate(startDate); const endTimestamp = Timestamp.fromDate(endDate)
     const email = currentUser.value?.email || ''; const customerPhone = email.split('@')[0] || 'unknown'; const uid = currentUser.value?.uid || 'unknown'
     const limitQ = query(collection(db, 'reservations'), where('customer_id', '==', customerProfile.value?.id || uid), where('start_at', '>=', Timestamp.now()), where('status', '!=', 'cancelled'))
     const limitSnapshot = await getDocs(limitQ)
+
     if (limitSnapshot.size >= 3) throw new Error('予約数の上限(3件)に達しています。')
+
     const q = query(collection(db, 'reservations'), where('start_at', '<', endTimestamp), where('end_at', '>', startTimestamp))
     const snapshot = await getDocs(q)
     let isBusy = false
-    snapshot.forEach(doc => { const data = doc.data(); if (data.status !== 'cancelled' && data.staff_id === selectedStaffId.value) isBusy = true })
+
+    snapshot.forEach(doc =>
+    {
+      const data = doc.data();
+      if (data.status !== 'cancelled' && data.staff_id === selectedStaffId.value) isBusy = true
+    })
     if (isBusy) throw new Error('申し訳ありません。指定された日時は担当者が満席です。')
+
     await addDoc(collection(db, 'reservations'), {
       customer_id: customerProfile.value?.id || uid, customer_name: customerProfile.value?.name_kana || 'WEB予約ゲスト',
       customer_phone: customerPhone, staff_id: selectedStaffId.value, start_at: startTimestamp, end_at: endTimestamp,
-      menu_items: selectedMenus.value.map(m => ({ title: m.title, price: m.price, duration: m.duration_min })),
+      menu_items: selectedMenus.value.map(m => (
+        { title: m.title, price: m.price, duration: m.duration_min }
+      )),
       total_price: totalAmount.value, total_duration_min: totalDuration.value, source: 'web', status: 'pending', note: customerNote.value || '', created_at: Timestamp.now()
     })
+
+    // 🔔 LINE通知を送信 (エラーが出ても予約自体は止めないようにtry-catchする)
+    try
+    {
+      const NOTIFY_API_URL = 'https://send-line-notice-799586295685.asia-northeast1.run.app';
+
+      // 日付整形
+      const dateStr = `${startDate.getMonth() + 1}/${startDate.getDate()} ${startDate.getHours()}:${String(startDate.getMinutes()).padStart(2, '0')}`;
+
+      const message = `🎉 新しい予約が入りました！\n\n日時: ${dateStr}\nメニュー: ${selectedMenus.value.map(m => m.title).join(', ')}\nお名前: ${customerProfile.value?.name_kana || 'ゲスト'} 様`;
+
+      fetch(NOTIFY_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message })
+      }); // awaitなしで投げっぱなしにする（待つ必要がないため）
+
+    } catch (e)
+    {
+      console.error('通知送信エラー', e);
+    }
     dialog.alert('予約リクエストを送信しました！\nお店からの確定をお待ちください。'); showModal.value = false; reservationDate.value = ''; selectedMenus.value = []
   } catch (error: any) { console.error(error); errorMessage.value = error.message } finally { processing.value = false }
 }

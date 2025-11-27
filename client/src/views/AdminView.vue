@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { db } from '../lib/firebase'
+import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
 import { useDialogStore } from '../stores/dialog'
+import { useRouter } from 'vue-router' //
+
 const dialog = useDialogStore() // 👈 ストア利用
+const router = useRouter()
 
 interface Staff { id: string; name: string }
 interface Reservation
@@ -63,9 +66,26 @@ const changeDate = (diff: number) =>
 
 watch(selectedDate, () => { initData(false) })
 
+// AdminView.vue の initData 関数
+
 const initData = async (fetchMaster = true) =>
 {
+  // 👇 追加: 一般ユーザー(電話ログイン)なら弾く
+  if (auth.currentUser?.phoneNumber)
+  {
+    alert('権限がありません')
+    router.push('/')
+    return
+  }
+
   loading.value = true
+
+  // 🔔 1. 通知の許可をリクエスト
+  if (Notification.permission === 'default')
+  {
+    await Notification.requestPermission()
+  }
+
   try
   {
     if (fetchMaster)
@@ -83,7 +103,6 @@ const initData = async (fetchMaster = true) =>
       if (configSnap.exists())
       {
         shopConfig.value = configSnap.data() as ShopConfig
-        // 🔒 安全なアクセス
         const hours = shopConfig.value.business_hours || { start: '09:00', end: '19:00' }
         if (hours.start) openHour.value = parseInt(hours.start.split(':')[0]!, 10)
         if (hours.end) closeHour.value = parseInt(hours.end.split(':')[0]!, 10)
@@ -105,6 +124,29 @@ const initData = async (fetchMaster = true) =>
     unsubscribe = onSnapshot(q, (snapshot) =>
     {
       reservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+
+      // 🔔 2. 新着検知ロジック
+      snapshot.docChanges().forEach((change) =>
+      {
+        if (change.type === 'added')
+        {
+          const data = change.doc.data()
+          // "WEB予約" かつ "作成されてから1分以内" のものだけ通知する
+          // (これがないと、リロードするたびに過去の予約通知が鳴ってしまいます)
+          const createdAt = data.created_at?.toDate().getTime() || 0
+          const now = new Date().getTime()
+          const isRecent = (now - createdAt) < 60000 // 60秒以内
+
+          if (data.source === 'web' && isRecent && !loading.value)
+          {
+            new Notification('✨ 新しいWEB予約が入りました！', {
+              body: `${data.customer_name}様\n${data.menu_items[0]?.title}`,
+              icon: '/favicon.ico' // アイコンがあれば指定
+            })
+          }
+        }
+      })
+
       loading.value = false
     })
   } catch (e) { console.error(e); loading.value = false }

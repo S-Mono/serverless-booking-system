@@ -1,12 +1,11 @@
 import { db } from './firebase'
 import { doc, setDoc, collection } from 'firebase/firestore'
 import { useDialogStore } from '../stores/dialog'
-const dialog = useDialogStore() // 👈 ストア利用
 
 export const seedDatabase = async () =>
 {
     console.log('データ投入を開始します...')
-
+    const dialog = useDialogStore() // 👈 ストア利用
     try
     {
         // 1. 店舗設定 (shop_config)
