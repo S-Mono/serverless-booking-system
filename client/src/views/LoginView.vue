@@ -38,8 +38,7 @@ onMounted(async () =>
     if (liffId)
     {
       await liff.init({ liffId })
-      // LINEブラウザ内なら自動ログイン等の処理をここに書けますが、
-      // 今回はGoogleログインボタンを用意するので初期化のみ行います。
+      // 必要に応じてここでLINEのユーザー情報を取得できます
     }
   } catch (error)
   {
@@ -71,7 +70,7 @@ const loginWithGoogle = async () =>
   }
 }
 
-// 📞 3. 電話番号認証処理 (既存)
+// 📞 3. 電話番号認証処理
 const handleAuth = async () =>
 {
   loading.value = true
