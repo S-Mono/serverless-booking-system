@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router' // 👈 追加
 import { db, auth } from '../lib/firebase'
 import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy } from 'firebase/firestore'
 import { onAuthStateChanged } from 'firebase/auth'
+import { useDialogStore } from '../stores/dialog'
+const dialog = useDialogStore() // 👈 ストア利用
 
 interface Reservation
 {
@@ -12,6 +15,7 @@ interface Reservation
   status: string // 'confirmed' | 'pending'
 }
 
+const router = useRouter() // 👈 追加
 const reservations = ref<Reservation[]>([])
 const loading = ref(true)
 const currentUser = ref<any>(null)
@@ -23,17 +27,13 @@ const fetchReservations = async (userId: string) =>
   loading.value = true
   try
   {
-    // 単純なクエリで取得してからクライアント側でソート (インデックスエラー回避)
     const q = query(collection(db, 'reservations'), where('customer_id', '==', userId))
     const querySnapshot = await getDocs(q)
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
 
     reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
 
-    // 🔒 修正箇所: 安全にアクセス
-    const email = currentUser.value?.email || ''
-    const phone = email.split('@')[0]
-
+    const phone = currentUser.value.email?.split('@')[0]
     if (phone)
     {
       const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
@@ -55,25 +55,30 @@ const saveProfile = async () =>
   isSavingProfile.value = true
   try
   {
-    const email = currentUser.value?.email || ''
-    const phone = email.split('@')[0] || ''
-
+    const phone = currentUser.value.email?.split('@')[0] || ''
     await setDoc(doc(db, 'customers', currentUser.value.uid), {
       name_kana: nameKana.value, phone_number: phone, is_existing_customer: true, updated_at: Timestamp.now()
     }, { merge: true })
-    alert('プロフィールを保存しました')
-  } catch (error) { console.error(error); alert('保存失敗') } finally { isSavingProfile.value = false }
+    dialog.alert('プロフィールを保存しました')
+  } catch (error) { console.error(error); dialog.alert('保存失敗') } finally { isSavingProfile.value = false }
 }
 
 const cancelReservation = async (id: string) =>
 {
-  if (!confirm('キャンセルしますか？')) return
+  const dlg = await dialog.confirm('キャンセルしますか？');
+  if (!dlg) return
   try
   {
     await deleteDoc(doc(db, 'reservations', id))
-    alert('予約をキャンセルしました')
+    dialog.alert('予約をキャンセルしました')
     reservations.value = reservations.value.filter(res => res.id !== id)
-  } catch (error) { console.error(error); alert('キャンセル失敗') }
+  } catch (error) { console.error(error); dialog.alert('キャンセル失敗') }
+}
+
+// 👇 追加: 戻る処理
+const goBack = () =>
+{
+  router.push('/')
 }
 
 onMounted(() =>
@@ -95,7 +100,11 @@ const formatDate = (ts: Timestamp) =>
 
 <template>
   <div class="mypage-container">
-    <h2 class="page-title">マイページ</h2>
+
+    <div class="page-header">
+      <button @click="goBack" class="back-btn">◀ 予約画面に戻る</button>
+      <h2 class="page-title">マイページ</h2>
+    </div>
 
     <div class="content-grid">
       <aside class="profile-column">
@@ -130,10 +139,8 @@ const formatDate = (ts: Timestamp) =>
               <li v-for="res in reservations" :key="res.id" class="reservation-item">
                 <div class="res-header">
                   <span class="date">{{ formatDate(res.start_at) }}</span>
-
                   <span v-if="res.status === 'confirmed'" class="status-badge confirmed">予約確定</span>
                   <span v-else-if="res.status === 'pending'" class="status-badge pending">お店の確認待ち</span>
-
                 </div>
                 <div class="res-body">
                   <div v-for="(item, index) in res.menu_items" :key="index" class="menu-item">
@@ -160,14 +167,43 @@ const formatDate = (ts: Timestamp) =>
   padding: 2rem 1rem;
 }
 
-.page-title {
+/* 👇 ヘッダー周りのスタイル調整 */
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
   border-bottom: 2px solid #eee;
   padding-bottom: 0.5rem;
-  margin-bottom: 2rem;
+}
+
+.page-title {
   font-size: 1.5rem;
+  color: #333;
+  margin: 0;
+  /* マージンリセット */
+  border-bottom: none;
+  /* ボーダーは親に任せる */
+  padding-bottom: 0;
+}
+
+.back-btn {
+  background: transparent;
+  border: 1px solid #ccc;
+  color: #555;
+  padding: 0.4rem 1rem;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.back-btn:hover {
+  background: #f0f0f0;
   color: #333;
 }
 
+/* ... (以下、既存のスタイルはそのまま) ... */
 .content-grid {
   display: grid;
   grid-template-columns: 300px 1fr;
@@ -282,7 +318,6 @@ const formatDate = (ts: Timestamp) =>
   color: #333;
 }
 
-/* ステータスバッジ */
 .status-badge {
   font-size: 0.8rem;
   padding: 4px 10px;
@@ -295,12 +330,9 @@ const formatDate = (ts: Timestamp) =>
   background: #42b883;
 }
 
-/* 緑 */
 .status-badge.pending {
   background: #e67e22;
 }
-
-/* オレンジ */
 
 .res-body {
   margin-bottom: 1rem;

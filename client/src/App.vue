@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
-import { auth } from './lib/firebase'
+import { auth, db } from './lib/firebase'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { collection, query, where, getDocs } from 'firebase/firestore'
 import { useUserStore } from './stores/user'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -11,20 +13,60 @@ const route = useRoute()
 
 const isMenuOpen = ref(false)
 const isAdminPage = computed(() => route.path.startsWith('/admin'))
+const customerName = ref('') // 👈 顧客名保持用
 
-// ID整形
-const formatUserId = (email: string | null | undefined) =>
+// ユーザー名取得ロジック
+const fetchCustomerName = async (user: any) =>
 {
-  if (!email) return ''
-  return email.split('@')[0]
+  if (!user)
+  {
+    customerName.value = ''
+    return
+  }
+
+  // 管理画面の時はID表示のままで良い場合、ここで分岐も可能
+  // 今回は顧客名があればそれを優先表示します
+
+  try
+  {
+    // 1. UIDで検索
+    let q = query(collection(db, 'customers'), where('id', '==', user.uid)) // ※SeedではID=phoneだったりするので注意が必要ですが、MyPageで保存したデータはUID=DocIDになっています
+    // 念のため電話番号(擬似メアド)でも検索
+    const phone = user.email?.split('@')[0]
+    if (phone)
+    {
+      q = query(collection(db, 'customers'), where('phone_number', '==', phone))
+    }
+
+    const snapshot = await getDocs(q)
+    if (!snapshot.empty)
+    {
+      customerName.value = snapshot.docs[0]!.data().name_kana
+    } else
+    {
+      // 未登録ならゲスト
+      customerName.value = 'ゲスト'
+    }
+  } catch (e)
+  {
+    console.error(e)
+    customerName.value = 'ゲスト'
+  }
 }
 
 onMounted(() =>
 {
-  onAuthStateChanged(auth, (user) =>
+  onAuthStateChanged(auth, async (user) =>
   {
-    if (user) userStore.setUser(user)
-    else userStore.setUser(null)
+    if (user)
+    {
+      userStore.setUser(user)
+      await fetchCustomerName(user)
+    } else
+    {
+      userStore.setUser(null)
+      customerName.value = ''
+    }
   })
 })
 
@@ -37,6 +79,7 @@ const handleLogout = async () =>
   {
     await signOut(auth)
     closeMenu()
+    customerName.value = ''
     router.push('/login')
   } catch (error)
   {
@@ -46,7 +89,8 @@ const handleLogout = async () =>
 </script>
 
 <template>
-  <div class="app-layout">
+  <div class="app-layout" :class="{ 'admin-mode': isAdminPage }">
+    <ConfirmDialog />
     <header>
       <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
         <h1>
@@ -61,7 +105,8 @@ const handleLogout = async () =>
 
         <nav class="nav-menu" :class="{ open: isMenuOpen }">
           <div v-if="userStore.user" class="menu-group">
-            <span class="user-email">{{ formatUserId(userStore.user.email || userStore.user.phoneNumber) }}</span>
+            <span class="user-welcome">ようこそ {{ customerName || 'ゲスト' }} 様</span>
+
             <button @click="handleLogout" class="logout-btn">ログアウト</button>
             <RouterLink to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ</RouterLink>
           </div>
@@ -78,60 +123,55 @@ const handleLogout = async () =>
   </div>
 </template>
 
-<style>
-html,
-body,
-#app {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  /* ブラウザ自体のスクロールを禁止 */
-}
-</style>
-
 <style scoped>
-/* アプリ全体のレイアウト */
+/* ... (レイアウト系のCSSは前回と同じ) ... */
 .app-layout {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-height: 100vh;
 }
 
-/* ヘッダー */
 header {
   background-color: #333;
   color: white;
   height: 60px;
-  flex-shrink: 0;
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 100;
+  width: 100%;
 }
 
-/* メイン: ここをスクロール可能エリアにする */
 main {
   flex: 1;
-  overflow-y: auto;
-  /* 👈 変更: mainタグ自体をスクロールさせる */
-  overflow-x: hidden;
+  width: 100%;
+}
+
+.app-layout.admin-mode {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-layout.admin-mode header {
   position: relative;
 }
 
-/* コンテナ設定 */
+.app-layout.admin-mode main {
+  overflow: hidden;
+  height: calc(100vh - 60px);
+}
+
 .container {
   max-width: 1024px;
   margin: 0 auto;
-  padding: 1rem;
-  /* height: 100%;  <-- 削除 */
-  /* overflow-y: auto; <-- 削除 */
-  box-sizing: border-box;
+  padding: 0;
+  width: 100%;
 }
 
 .container-fluid {
   width: 100%;
-  height: 100%;
   padding: 0;
   margin: 0;
+  height: 100%;
 }
 
 .header-inner {
@@ -139,11 +179,10 @@ main {
   justify-content: space-between;
   align-items: center;
   height: 100%;
-  padding: 0 2rem !important;
+  padding: 0 2rem;
   box-sizing: border-box;
 }
 
-/* --- 以下、既存のデザイン --- */
 .logo-link {
   color: white;
   text-decoration: none;
@@ -163,13 +202,15 @@ main {
   gap: 1rem;
 }
 
-.user-email {
+/* 👇 修正: ユーザー名表示のスタイル */
+.user-welcome {
   font-size: 0.9rem;
-  color: #ccc;
+  color: #fff;
   margin-right: 1rem;
   border-right: 1px solid #555;
   padding-right: 1.5rem;
   white-space: nowrap;
+  font-weight: bold;
 }
 
 .mypage-btn {
@@ -221,7 +262,7 @@ main {
 
 @media (max-width: 768px) {
   .header-inner {
-    padding: 0 1rem !important;
+    padding: 0 1rem;
   }
 
   .hamburger-btn {
@@ -292,7 +333,8 @@ main {
     margin-bottom: 0.5rem;
   }
 
-  .user-email {
+  /* スマホ版の表示調整 */
+  .user-welcome {
     order: 2;
     display: block;
     text-align: center;
@@ -304,14 +346,6 @@ main {
     border-right: none;
     border-bottom: 1px solid #444;
     padding-bottom: 0.5rem;
-  }
-
-  .user-email::before {
-    content: "Login ID:";
-    display: block;
-    font-size: 0.7rem;
-    color: #666;
-    margin-bottom: 0.2rem;
   }
 
   .mypage-btn {

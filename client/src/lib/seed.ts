@@ -1,5 +1,7 @@
 import { db } from './firebase'
 import { doc, setDoc, collection } from 'firebase/firestore'
+import { useDialogStore } from '../stores/dialog'
+const dialog = useDialogStore() // 👈 ストア利用
 
 export const seedDatabase = async () =>
 {
@@ -103,11 +105,11 @@ export const seedDatabase = async () =>
         }
         console.log('✅ 顧客データ 完了')
 
-        alert('初期データの投入が完了しました！')
+        dialog.alert('初期データの投入が完了しました！')
 
     } catch (error)
     {
         console.error('データ投入エラー:', error)
-        alert('エラーが発生しました。コンソールを確認してください。')
+        dialog.alert('エラーが発生しました。コンソールを確認してください。')
     }
 }

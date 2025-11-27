@@ -2,6 +2,8 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { db } from '../lib/firebase'
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
+import { useDialogStore } from '../stores/dialog'
+const dialog = useDialogStore() // 👈 ストア利用
 
 interface Staff { id: string; name: string }
 interface Reservation
@@ -134,20 +136,38 @@ const submitReservation = async () =>
     if (isEditing.value && editingId.value)
     {
       await updateDoc(doc(db, 'reservations', editingId.value), payload)
-      alert('予約を更新しました')
+      dialog.alert('予約を更新しました')
     } else
     {
       await addDoc(collection(db, 'reservations'), { ...payload, created_at: Timestamp.now() })
-      alert('予約を追加しました')
+      dialog.alert('予約を追加しました')
     }
     showModal.value = false
-  } catch (e) { console.error(e); alert('処理失敗') }
+  } catch (e) { console.error(e); dialog.alert('処理失敗') }
 }
 
 const confirmDelete = (id: string) => { deleteTargetId.value = id; showDeleteModal.value = true; showDetailModal.value = false }
-const executeDelete = async () => { if (!deleteTargetId.value) return; try { await deleteDoc(doc(db, 'reservations', deleteTargetId.value)); showDeleteModal.value = false; deleteTargetId.value = null } catch (e) { alert('削除失敗') } }
+const executeDelete = async () =>
+{
+  if (!deleteTargetId.value) return; try
+  {
+    await deleteDoc(doc(db, 'reservations', deleteTargetId.value));
+    showDeleteModal.value = false;
+    deleteTargetId.value = null
+  } catch (e) { dialog.alert('削除失敗') }
+}
 const openReservationDetail = (res: Reservation) => { selectedReservation.value = res; showDetailModal.value = true }
-const approveReservation = async (id: string) => { try { await updateDoc(doc(db, 'reservations', id), { status: 'confirmed' }); alert('確定しました'); showDetailModal.value = false } catch (e) { alert('失敗') } }
+const approveReservation = async (id: string) =>
+{
+  try
+  {
+    await updateDoc(doc(db, 'reservations', id), {
+      status: 'confirmed'
+    });
+    dialog.alert('確定しました');
+    showDetailModal.value = false
+  } catch (e) { dialog.alert('失敗') }
+}
 
 const openEditModal = (res: Reservation) =>
 {
@@ -603,6 +623,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   font-size: 0.9rem;
 }
 
+/* カンバンカード */
 .kanban-card {
   background: white;
   padding: 0.6rem;
@@ -624,26 +645,33 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
+/* 🔵 WEB予約 (確定) */
 .kanban-card.res-web {
   border-left-color: #3498db;
 }
 
+/* 🟠 電話予約 (確定) */
 .kanban-card.res-phone {
   border-left-color: #e67e22;
 }
 
+/* 🟣 仮予約 (未確定) - 背景色も変えて目立たせる */
 .kanban-card.res-pending {
   border-left-color: #9b59b6;
-  background-color: #fbfaff;
+  background-color: #f3e5f5;
+  /* 薄い紫 */
 }
 
+/* 仮予約アイコン「未」 */
 .status-icon-pending {
-  color: #9b59b6;
+  color: #fff;
+  background-color: #9b59b6;
   font-weight: bold;
-  font-size: 0.8rem;
-  border: 1px solid #9b59b6;
-  padding: 1px 3px;
+  font-size: 0.75rem;
+  padding: 2px 6px;
   border-radius: 4px;
+  margin-top: 4px;
+  display: inline-block;
 }
 
 .status-pending {
@@ -940,7 +968,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   cursor: pointer;
   transition: all 0.2s;
   z-index: 1;
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .reservation-bar:hover {
@@ -955,6 +983,17 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 
 .reservation-bar.res-phone {
   background-color: #e67e22;
+}
+
+/* 🟣 仮予約バー - ストライプで「未確定」感を出す */
+.reservation-bar.res-pending {
+  background-color: #9b59b6;
+  background-image: repeating-linear-gradient(45deg,
+      transparent,
+      transparent 5px,
+      rgba(255, 255, 255, 0.2) 5px,
+      rgba(255, 255, 255, 0.2) 10px);
+  border: 1px solid #8e44ad;
 }
 
 .drag-preview-bar {

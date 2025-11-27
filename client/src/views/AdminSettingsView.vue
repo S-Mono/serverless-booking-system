@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { db } from '../lib/firebase'
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { seedDatabase } from '../lib/seed'
+import { useDialogStore } from '../stores/dialog'
+const dialog = useDialogStore() // 👈 ストア利用
 
 // --- 型定義 ---
 interface ShopConfig
@@ -24,24 +26,21 @@ const router = useRouter()
 const staffs = ref<Staff[]>([])
 const loading = ref(true)
 
-// 店舗設定データ
 const config = ref<ShopConfig>({
   holiday_weekdays: [],
   closed_dates: [],
   business_hours: { start: '09:00', end: '19:00' }
 })
 
-// 新規スタッフ用
 const newStaff = ref({
   name: '', display_name: '', order_priority: 99,
   roles: { accepts_new_customer: true, accepts_free_booking: true }, is_working: true
 })
 
-// 曜日ラベル
 const weekdays = ['日', '月', '火', '水', '木', '金', '土']
 const tempClosedDate = ref('')
 
-// --- データ取得 ---
+// --- データ操作 ---
 const fetchData = async () =>
 {
   loading.value = true
@@ -68,7 +67,6 @@ const fetchData = async () =>
   } catch (e) { console.error(e) } finally { loading.value = false }
 }
 
-// --- 保存・更新系 ---
 const saveConfig = async () =>
 {
   try
@@ -78,8 +76,8 @@ const saveConfig = async () =>
       closed_dates: config.value.closed_dates,
       business_hours: config.value.business_hours
     })
-    alert('店舗設定を保存しました')
-  } catch (e) { console.error(e); alert('保存失敗') }
+    dialog.alert('店舗設定を保存しました')
+  } catch (e) { console.error(e); dialog.alert('保存失敗') }
 }
 
 const addClosedDate = () =>
@@ -99,31 +97,49 @@ const removeClosedDate = (date: string) =>
 const saveStaff = async (staff: Staff) =>
 {
   await updateDoc(doc(db, 'staffs', staff.id), { ...staff })
-  alert(`"${staff.name}" を更新しました`)
+  dialog.alert(`"${staff.name}" を更新しました`)
 }
 const addStaff = async () =>
 {
   if (!newStaff.value.name) return
   await addDoc(collection(db, 'staffs'), { ...newStaff.value })
-  alert('追加しました')
+  dialog.alert('追加しました')
   fetchStaffs()
 }
 const removeStaff = async (id: string) =>
 {
-  if (confirm('削除しますか？'))
+  const dlg = await dialog.confirm('本当に削除しますか？', '削除確認', 'danger')
+  if (!dlg) return
+  try
   {
     await deleteDoc(doc(db, 'staffs', id))
     fetchStaffs()
+  } catch (error)
+  {
+    dialog.alert('削除に失敗しました', 'エラー')
   }
+
 }
 const fetchStaffs = fetchData
 
+// ⚡ 開発者用シード (パスワード保護付き)
 const handleSeed = async () =>
 {
-  if (confirm('データがリセットされます。よろしいですか？'))
+  const password = prompt('開発者用パスワードを入力してください')
+
+  if (password === null) return // キャンセル時
+
+  if (password === 'rukario1109')
   {
-    await seedDatabase()
-    fetchData()
+    const dlg = await dialog.confirm('【警告】\n現在のデータがすべて消去され、初期状態に戻ります。\n本当によろしいですか？', '初期データ投入確認', 'danger')
+    if (dlg)
+    {
+      await seedDatabase()
+      fetchData() // 画面を再読み込み
+    }
+  } else
+  {
+    dialog.alert('パスワードが違います。操作はキャンセルされました。')
   }
 }
 const goBack = () => router.push('/admin')
@@ -139,92 +155,106 @@ onMounted(() => { fetchData() })
     </header>
 
     <main class="settings-body">
-      <div class="content-wrapper">
+      <div class="layout-grid">
 
-        <div class="setting-card">
-          <h3>📅 カレンダー・休日設定</h3>
-
-          <div class="config-section">
-            <h4>定休日 (毎週)</h4>
-            <div class="weekdays-group">
-              <label v-for="(day, index) in weekdays" :key="index" class="checkbox-label">
-                <input type="checkbox" :value="index" v-model="config.holiday_weekdays">
-                {{ day }}
-              </label>
-            </div>
+        <aside class="settings-sidebar">
+          <div class="side-card nav-card">
+            <h3>設定メニュー</h3>
+            <p class="side-desc">メニューの追加・編集はこちらから行えます。</p>
+            <button @click="router.push('/admin/settings/menus')" class="menu-link-btn">
+              📋 メニュー・担当設定
+            </button>
           </div>
+        </aside>
 
-          <div class="config-section">
-            <h4>臨時休業日 (特定の日)</h4>
-            <div class="date-input-row">
-              <input type="date" v-model="tempClosedDate" />
-              <button @click="addClosedDate" class="add-mini-btn">追加</button>
-            </div>
-            <div class="tags-list">
-              <span v-for="date in config.closed_dates" :key="date" class="date-tag">
-                {{ date }}
-                <button @click="removeClosedDate(date)" class="tag-close">×</button>
-              </span>
-            </div>
-          </div>
+        <div class="settings-main">
+          <div class="cards-grid">
 
-          <div class="action-row">
-            <button @click="saveConfig" class="save-main-btn">カレンダー設定を保存</button>
-          </div>
-        </div>
-
-        <div class="setting-card">
-          <h3>⏰ タイムライン設定</h3>
-          <p class="desc">管理画面のガントチャートに表示する時間範囲を設定します。</p>
-          <div class="staff-grid">
-            <div class="input-group">
-              <label>開始時間 (例: 09:00)</label>
-              <input type="time" v-model="config.business_hours.start" />
-            </div>
-            <div class="input-group">
-              <label>終了時間 (例: 19:00)</label>
-              <input type="time" v-model="config.business_hours.end" />
-            </div>
-          </div>
-          <div class="action-row">
-            <button @click="saveConfig" class="save-main-btn">時間を保存</button>
-          </div>
-        </div>
-
-        <div class="setting-card">
-          <h3>スタッフ管理</h3>
-          <div v-if="loading">読み込み中...</div>
-          <div v-else class="staff-list">
-            <div v-for="staff in staffs" :key="staff.id" class="staff-item" :class="{ inactive: !staff.is_working }">
-              <div class="staff-header">
-                <span class="staff-id">ID: {{ staff.id }}</span>
-                <button class="delete-btn" @click="removeStaff(staff.id)">削除</button>
+            <div class="setting-card calendar-card">
+              <h3>📅 カレンダー・休日設定</h3>
+              <div class="config-section">
+                <h4>定休日 (毎週)</h4>
+                <div class="weekdays-group">
+                  <label v-for="(day, index) in weekdays" :key="index" class="checkbox-label">
+                    <input type="checkbox" :value="index" v-model="config.holiday_weekdays">
+                    {{ day }}
+                  </label>
+                </div>
               </div>
-              <div class="staff-grid">
-                <div class="input-group"><label>略称</label><input type="text" v-model="staff.name" /></div>
-                <div class="input-group"><label>表示名</label><input type="text" v-model="staff.display_name" /></div>
+              <div class="config-section">
+                <h4>臨時休業日</h4>
+                <div class="date-input-row">
+                  <input type="date" v-model="tempClosedDate" />
+                  <button @click="addClosedDate" class="add-mini-btn">追加</button>
+                </div>
+                <div class="tags-list">
+                  <span v-for="date in config.closed_dates" :key="date" class="date-tag">
+                    {{ date }} <button @click="removeClosedDate(date)" class="tag-close">×</button>
+                  </span>
+                </div>
               </div>
-              <div class="roles-grid">
-                <label><input type="checkbox" v-model="staff.is_working"> 🟢 出勤中</label>
-                <label><input type="checkbox" v-model="staff.roles.accepts_new_customer"> 新規OK</label>
+              <div class="action-row">
+                <button @click="saveConfig" class="save-main-btn">保存</button>
               </div>
-              <div class="action-row"><button @click="saveStaff(staff)" class="update-btn">保存</button></div>
             </div>
-          </div>
 
-          <div class="add-staff-area">
-            <h4>➕ スタッフ追加</h4>
-            <div class="staff-grid">
-              <input type="text" v-model="newStaff.name" placeholder="略称" />
-              <input type="text" v-model="newStaff.display_name" placeholder="表示名" />
+            <div class="setting-card time-card">
+              <h3>⏰ タイムライン設定</h3>
+              <div class="config-section">
+                <div class="input-row">
+                  <div class="input-group">
+                    <label>開始</label>
+                    <input type="time" v-model="config.business_hours.start" />
+                  </div>
+                  <div class="input-group">
+                    <label>終了</label>
+                    <input type="time" v-model="config.business_hours.end" />
+                  </div>
+                </div>
+              </div>
+              <div class="action-row">
+                <button @click="saveConfig" class="save-main-btn">保存</button>
+              </div>
             </div>
-            <button @click="addStaff" class="add-btn">追加</button>
-          </div>
-        </div>
 
-        <div class="setting-card danger-zone">
-          <h3>⚡ 開発者用</h3>
-          <button @click="handleSeed" class="seed-btn">初期データをリセット (Seed)</button>
+            <div class="setting-card full-width">
+              <h3>スタッフ管理</h3>
+              <div v-if="loading">読み込み中...</div>
+              <div v-else class="staff-list">
+                <div v-for="staff in staffs" :key="staff.id" class="staff-item"
+                  :class="{ inactive: !staff.is_working }">
+                  <div class="staff-header">
+                    <span class="staff-id">ID: {{ staff.id }}</span>
+                    <button class="delete-btn" @click="removeStaff(staff.id)">削除</button>
+                  </div>
+                  <div class="staff-grid">
+                    <div class="input-group"><label>略称</label><input type="text" v-model="staff.name" /></div>
+                    <div class="input-group"><label>表示名</label><input type="text" v-model="staff.display_name" /></div>
+                  </div>
+                  <div class="roles-grid">
+                    <label><input type="checkbox" v-model="staff.is_working"> 🟢 出勤</label>
+                    <label><input type="checkbox" v-model="staff.roles.accepts_new_customer"> 新規OK</label>
+                  </div>
+                  <div class="action-row"><button @click="saveStaff(staff)" class="update-btn">保存</button></div>
+                </div>
+              </div>
+
+              <div class="add-staff-area">
+                <h4>➕ スタッフ追加</h4>
+                <div class="staff-grid">
+                  <input type="text" v-model="newStaff.name" placeholder="略称" />
+                  <input type="text" v-model="newStaff.display_name" placeholder="表示名" />
+                </div>
+                <button @click="addStaff" class="add-btn">追加</button>
+              </div>
+            </div>
+
+            <div class="setting-card danger-zone full-width">
+              <h3>⚡ 開発者用</h3>
+              <button @click="handleSeed" class="seed-btn">初期データをリセット (Seed)</button>
+            </div>
+
+          </div>
         </div>
 
       </div>
@@ -233,15 +263,13 @@ onMounted(() => { fetchData() })
 </template>
 
 <style scoped>
-/* 👇 レイアウト修正箇所: 画面いっぱいに広げて内部スクロール */
+/* 全体レイアウト */
 .settings-container {
   height: 100%;
-  /* 100vh ではなく 100% (App.vueの設定に従う) */
   display: flex;
   flex-direction: column;
   background-color: #f4f5f7;
   overflow: hidden;
-  /* 外側のはみ出し防止 */
 }
 
 .settings-header {
@@ -252,27 +280,8 @@ onMounted(() => { fetchData() })
   align-items: center;
   gap: 1rem;
   flex-shrink: 0;
-  /* ヘッダーは縮めない */
 }
 
-.settings-body {
-  flex: 1;
-  /* 残りの高さを埋める */
-  overflow-y: auto;
-  /* 縦スクロール有効化 */
-  padding: 2rem;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.content-wrapper {
-  max-width: 800px;
-  margin: 0 auto;
-  padding-bottom: 2rem;
-  /* 下部の余白確保 */
-}
-
-/* --- 以下、既存のデザイン --- */
 .settings-header h2 {
   margin: 0;
   font-size: 1.2rem;
@@ -291,27 +300,105 @@ onMounted(() => { fetchData() })
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* ボディ部分 (スクロールあり) */
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 📐 レイアウトグリッド (左サイドバー + 右メイン) */
+.layout-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  /* 左固定幅、右可変 */
+  gap: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* サイドバー */
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.side-card {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.nav-card {
+  border-left: 5px solid #3498db;
+}
+
+.side-card h3 {
+  margin-top: 0;
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+  color: #2c3e50;
+}
+
+.side-desc {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 1rem;
+}
+
+.menu-link-btn {
+  background: #3498db;
+  color: white;
+  border: none;
+  padding: 0.8rem 1rem;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  width: 100%;
+  font-size: 0.95rem;
+  transition: background 0.2s;
+}
+
+.menu-link-btn:hover {
+  background: #2980b9;
+}
+
+/* メインエリア (カードグリッド) */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  /* 自動で列数を調整 */
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* 各カード共通 */
 .setting-card {
   background: white;
   padding: 1.5rem;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  margin-bottom: 1.5rem;
 }
 
 .setting-card h3 {
   margin-top: 0;
   border-bottom: 1px solid #eee;
   padding-bottom: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  color: #333;
 }
 
-.desc {
-  font-size: 0.9rem;
-  color: #666;
-  margin-bottom: 1.5rem;
+/* 横幅いっぱい使うカード (スタッフ管理など) */
+.full-width {
+  grid-column: 1 / -1;
 }
 
+/* 個別スタイル */
 .config-section {
   margin-bottom: 1.5rem;
 }
@@ -324,7 +411,7 @@ onMounted(() => { fetchData() })
 
 .weekdays-group {
   display: flex;
-  gap: 1rem;
+  gap: 0.8rem;
   flex-wrap: wrap;
 }
 
@@ -333,6 +420,7 @@ onMounted(() => { fetchData() })
   display: flex;
   align-items: center;
   gap: 4px;
+  font-size: 0.9rem;
 }
 
 .date-input-row {
@@ -358,9 +446,9 @@ onMounted(() => { fetchData() })
 
 .date-tag {
   background: #f0f0f0;
-  padding: 0.3rem 0.6rem;
+  padding: 0.2rem 0.5rem;
   border-radius: 4px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -374,7 +462,6 @@ onMounted(() => { fetchData() })
   height: 16px;
   font-size: 10px;
   cursor: pointer;
-  line-height: 1;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -385,46 +472,16 @@ onMounted(() => { fetchData() })
   background: #27ae60;
   color: white;
   border: none;
-  padding: 0.8rem 2rem;
+  padding: 0.6rem 1.5rem;
   border-radius: 4px;
   font-weight: bold;
   cursor: pointer;
   width: 100%;
 }
 
-.staff-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-}
-
-.staff-item {
-  padding: 1rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  background: #fff;
-  transition: background 0.3s;
-}
-
-.staff-item.inactive {
-  background: #f0f0f0;
-  border-style: dashed;
-  opacity: 0.8;
-}
-
-.staff-header {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8rem;
-  color: #999;
-  margin-bottom: 0.5rem;
-}
-
-.staff-grid {
+.input-row {
   display: flex;
   gap: 1rem;
-  margin-bottom: 0.5rem;
 }
 
 .input-group {
@@ -433,31 +490,74 @@ onMounted(() => { fetchData() })
   flex-direction: column;
 }
 
-.input-group input,
-.date-input-row input {
+.input-group label {
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 2px;
+}
+
+.input-group input {
   padding: 0.5rem;
   border: 1px solid #ccc;
   border-radius: 4px;
 }
 
+/* スタッフリスト */
+.staff-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.staff-item {
+  padding: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.staff-item.inactive {
+  background: #f9f9f9;
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.staff-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #999;
+}
+
+.staff-grid {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .roles-grid {
   display: flex;
   gap: 1rem;
-  margin-bottom: 0.5rem;
   font-size: 0.9rem;
+  margin-top: 0.2rem;
 }
 
 .action-row {
   text-align: right;
+  margin-top: auto;
 }
 
 .update-btn {
   background: #3498db;
   color: white;
   border: none;
-  padding: 0.4rem 1rem;
+  padding: 0.3rem 1rem;
   border-radius: 4px;
   cursor: pointer;
+  font-size: 0.9rem;
 }
 
 .delete-btn {
@@ -476,13 +576,19 @@ onMounted(() => { fetchData() })
   border: 1px solid #a2d9ce;
 }
 
+.add-staff-area h4 {
+  margin: 0 0 0.5rem 0;
+  color: #16a085;
+  font-size: 1rem;
+}
+
 .add-btn {
-  margin-top: 1rem;
+  margin-top: 0.5rem;
   width: 100%;
   background: #16a085;
   color: white;
   border: none;
-  padding: 0.6rem;
+  padding: 0.5rem;
   border-radius: 4px;
   font-weight: bold;
   cursor: pointer;
@@ -499,5 +605,22 @@ onMounted(() => { fetchData() })
   padding: 0.8rem;
   border-radius: 4px;
   cursor: pointer;
+}
+
+/* 📱 スマホ対応 */
+@media (max-width: 768px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .settings-sidebar {
+    order: -1;
+    /* サイドバーを上に */
+  }
+
+  .staff-list {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
