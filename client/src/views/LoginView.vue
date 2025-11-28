@@ -93,41 +93,69 @@ onMounted(async () => {
   }
 })
 
-// 🟢 LINEログイン (LIFF)
+// 🟢 LINEアカウントでログイン (LIFF専用) -- デバッグ版
 const loginWithLine = async () => {
-  if (!liff.isLoggedIn()) {
-    liff.login()
-    return
-  }
-  loading.value = true
-  message.value = 'LINEアカウントを確認中...'
+  // デバッグ1: 関数が呼ばれたか
+  alert('LINEログイン処理を開始します')
 
   try {
+    // デバッグ2: LIFFの状態確認
+    if (!liff.isInClient()) {
+      alert('エラー: LINEアプリ内ではありません')
+      return
+    }
+    if (!liff.isLoggedIn()) {
+      alert('未ログインのため、LINEログイン画面へ移動します')
+      liff.login()
+      return
+    }
+
+    loading.value = true
+    message.value = 'LINEアカウントを確認中...'
+
+    // デバッグ3: プロフィール取得開始
+    alert('プロフィールを取得します...')
     const profile = await liff.getProfile()
+    alert(`取得成功: ${profile.displayName} (${profile.userId.substring(0, 5)}...)`)
+
     const lineUserId = profile.userId
     const lineName = profile.displayName
-
+    
     const firebaseEmail = `line_${lineUserId}${LINE_DOMAIN}`
     const firebasePassword = `line_pass_${lineUserId}`
 
-    let user: User
+    alert(`Firebase認証を開始します...\nEmail: ${firebaseEmail}`)
+
+    let user: any
     try {
+      // A. ログイン試行
       const cred = await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
       user = cred.user
+      alert('既存ユーザーとしてログイン成功！')
     } catch (error: any) {
+      alert(`ログイン失敗(新規作成へ): ${error.code}`)
+      
+      // B. 新規登録試行
       if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
         const cred = await createUserWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
         user = cred.user
+        alert('新規ユーザー作成成功！')
       } else {
         throw error
       }
     }
-    // 顧客データ作成 & トップへ
+
+    // 顧客データ作成
+    alert('顧客データを作成/確認します...')
     await createCustomerData(user, 'line', lineName)
+    
+    alert('全て完了！トップページへ移動します')
     router.push('/')
 
   } catch (error: any) {
     console.error(error)
+    // エラー内容をアラートで表示
+    alert(`【エラー発生】\n${error.code}\n${error.message}`)
     message.value = `LINEログイン失敗: ${error.message}`
     loading.value = false
   }
