@@ -6,11 +6,12 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithRedirect, // 👈 変更: リダイレクト用
-  getRedirectResult   // 👈 追加: 戻ってきた時の処理用
+  signInWithPopup,      // 👈 追加
+  signInWithRedirect,   // 👈 追加
+  getRedirectResult     // 👈 追加
 } from 'firebase/auth'
 import liff from '@line/liff'
-import { seedDatabase } from '../lib/seed'
+import { seedDatabase } from '../lib/seed' // 開発用ツール
 
 const router = useRouter()
 
@@ -29,30 +30,36 @@ const liffLoading = ref(true) // LIFF初期化中フラグ
 // 擬似メールドメイン
 const PSEUDO_DOMAIN = '@local.booking-system'
 
+// 🟢 初期化処理 (リダイレクト復帰 & LIFF初期化)
 onMounted(async () => {
-  // 🟢 1. Googleリダイレクトログインからの帰還チェック
+  // 1. Googleリダイレクトログインからの帰還チェック
   try {
     const result = await getRedirectResult(auth)
     if (result) {
-      // ログイン成功して戻ってきた場合
-      console.log('Google Login Success:', result.user)
+      console.log('Google Login Success (Redirect):', result.user)
       router.push('/')
       return
     }
   } catch (error: any) {
     console.error('Google Redirect Error:', error)
-    message.value = `ログインエラー: ${error.message}`
+    // ユーザーキャンセルなどは無視して良いが、エラーなら表示
+    if (error.code !== 'auth/popup-closed-by-user') {
+      message.value = `ログインエラー: ${error.message}`
+    }
   }
 
-  // 🟢 2. LIFF初期化
+  // 2. LIFF初期化
   try {
     const liffId = import.meta.env.VITE_LIFF_ID
     if (liffId) {
       await liff.init({ liffId })
+
+      // LINEブラウザ内ならメールアドレス自動入力などの補助
       if (liff.isLoggedIn()) {
         const decoded = liff.getDecodedIDToken()
         if (decoded && decoded.email) {
           console.log('LINE Email:', decoded.email)
+          // 必要ならここに自動入力ロジックを記述
         }
       }
     }
@@ -63,14 +70,34 @@ onMounted(async () => {
   }
 })
 
-// 🔵 Googleログイン処理 (リダイレクト版)
+// 🔵 Googleログイン処理 (ハイブリッド版)
 const loginWithGoogle = async () => {
   loading.value = true
   message.value = ''
   try {
     const provider = new GoogleAuthProvider()
-    // 画面遷移してログイン (ページが切り替わります)
-    await signInWithRedirect(auth, provider)
+
+    // 🏠 localhost (開発中) ならポップアップを使う
+    // (ローカルでのリダイレクトはCookie設定などでエラーになりやすいため)
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      await signInWithPopup(auth, provider)
+      router.push('/')
+    }
+    // 🚀 本番環境 (LIFF/スマホ) ならリダイレクトを使う
+    else {
+      // LIFF内なら外部ブラウザへ (Googleのセキュリティポリシー対策)
+      if (liff.isInClient()) {
+        await liff.openWindow({
+          url: window.location.href,
+          external: true
+        })
+        loading.value = false
+        return
+      }
+      // 通常ブラウザならリダイレクト認証
+      await signInWithRedirect(auth, provider)
+      // ※リダイレクトするため、ここから下の行は実行されません
+    }
   } catch (error: any) {
     console.error(error)
     message.value = `Googleログイン失敗: ${error.message}`
@@ -78,7 +105,7 @@ const loginWithGoogle = async () => {
   }
 }
 
-// 📞 電話番号認証処理 (既存のまま)
+// 📞 電話番号認証処理 (既存)
 const handleAuth = async () => {
   loading.value = true
   message.value = ''
