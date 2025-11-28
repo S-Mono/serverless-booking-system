@@ -6,9 +6,9 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult
+  signInWithPopup,      // PC/ローカル用
+  signInWithRedirect,   // スマホ用
+  getRedirectResult     // リダイレクト復帰用
 } from 'firebase/auth'
 import liff from '@line/liff'
 import { seedDatabase } from '../lib/seed'
@@ -21,9 +21,7 @@ const password = ref('')
 const loading = ref(false)
 const message = ref('')
 const liffLoading = ref(true)
-
-// LINEアプリ内かどうかの判定フラグ
-const isLineApp = ref(false)
+const isLineApp = ref(false) // LINEアプリ内かどうかのフラグ
 
 const PSEUDO_DOMAIN = '@local.booking-system'
 
@@ -34,14 +32,16 @@ onMounted(async () => {
   }
 
   // 2. Googleリダイレクトログインからの帰還チェック
+  // (スマホでGoogle認証から戻ってきた時に実行される)
   try {
     const result = await getRedirectResult(auth)
     if (result) {
+      console.log('Google Login Success')
       router.push('/')
       return
     }
   } catch (error: any) {
-    if (error.code !== 'auth/popup-closed-by-user') {
+    if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/redirect-cancelled-by-user') {
       message.value = `ログインエラー: ${error.message}`
     }
   }
@@ -51,12 +51,9 @@ onMounted(async () => {
     const liffId = import.meta.env.VITE_LIFF_ID
     if (liffId) {
       await liff.init({ liffId })
-      // LIFF初期化成功後、念のため再判定
       if (liff.isInClient()) {
         isLineApp.value = true
       }
-    } else {
-      console.error('VITE_LIFF_ID が設定されていません')
     }
   } catch (error) {
     console.error('LIFF init failed', error)
@@ -65,28 +62,31 @@ onMounted(async () => {
   }
 })
 
-// 🔵 Googleログイン処理 (ハイブリッド版)
+// 🔵 Googleログイン処理 (環境別切り替え)
 const loginWithGoogle = async () => {
   loading.value = true
   message.value = ''
+
   try {
     const provider = new GoogleAuthProvider()
 
     // 📱 A. LINEアプリ内の場合 -> 外部ブラウザで開き直す
     if (isLineApp.value) {
-      if (!liff.id) {
-        alert('エラー: LIFF IDが設定されていないか、初期化に失敗しました。')
+      // LIFFの機能で外部ブラウザを起動
+      if (liff.id) {
+        await liff.openWindow({
+          url: window.location.href, // 現在のページを外部ブラウザで開く
+          external: true
+        })
+        // 外部ブラウザが開くので、このページでの処理は終了
+        loading.value = false
+        return
+      } else {
+        // 万が一LIFF初期化に失敗していた場合のフォールバック
+        window.open(window.location.href, '_system')
         loading.value = false
         return
       }
-      // 外部ブラウザで現在のページを開く
-      await liff.openWindow({
-        url: window.location.href,
-        external: true
-      })
-      // ここで処理終了（ユーザーは外部ブラウザへ移動する）
-      loading.value = false
-      return
     }
 
     // 🏠 B. PC・ローカル開発 (localhost) -> ポップアップ
@@ -97,6 +97,7 @@ const loginWithGoogle = async () => {
     // 🚀 C. スマホの外部ブラウザ (Chrome/Safari) -> リダイレクト
     else {
       await signInWithRedirect(auth, provider)
+      // リダイレクトされるので、これ以降の処理は実行されません
     }
 
   } catch (error: any) {
@@ -106,11 +107,14 @@ const loginWithGoogle = async () => {
   }
 }
 
+// 📞 電話番号認証処理
 const handleAuth = async () => {
   loading.value = true
   message.value = ''
+
   try {
     const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
+
     if (isLoginMode.value) {
       await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
       router.push('/')
@@ -119,6 +123,7 @@ const handleAuth = async () => {
       message.value = '登録完了！自動的にログインしました。'
       router.push('/')
     }
+
   } catch (error: any) {
     console.error(error)
     if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
@@ -153,10 +158,12 @@ const handleAuth = async () => {
         <label>電話番号 (ハイフンなし)</label>
         <input type="tel" v-model="phoneNumber" placeholder="09012345678" required pattern="[0-9]*" />
       </div>
+
       <div class="form-group">
         <label>パスワード</label>
         <input type="password" v-model="password" placeholder="6文字以上" required minlength="6" />
       </div>
+
       <button type="submit" class="submit-btn" :disabled="loading">
         {{ loading ? '処理中...' : (isLoginMode ? 'ログイン' : '登録する') }}
       </button>
@@ -173,13 +180,15 @@ const handleAuth = async () => {
 
     <div class="dev-tools">
       <p class="dev-label">開発用ツール</p>
-      <button @click="seedDatabase" class="seed-btn">初期データをDBに投入</button>
+      <button @click="seedDatabase" class="seed-btn">
+        初期データをDBに投入
+      </button>
     </div>
+
   </div>
 </template>
 
 <style scoped>
-/* CSSは変更なし */
 .auth-container {
   max-width: 400px;
   margin: 2rem auto;
