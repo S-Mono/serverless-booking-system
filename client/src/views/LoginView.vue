@@ -133,22 +133,47 @@ const loginWithLine = async () => {
   }
 }
 
-// 🔵 Googleログイン (ハイブリッド)
+// 🔵 Googleログイン処理
 const loginWithGoogle = async () => {
   loading.value = true
   message.value = ''
+  
   try {
     const provider = new GoogleAuthProvider()
 
-    // localhostならポップアップ、本番ならリダイレクト
-    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-      const result = await signInWithPopup(auth, provider)
-      await createCustomerData(result.user, 'google')
-      router.push('/')
-    } else {
-      // リダイレクト (戻ってきたら onMounted で処理される)
-      await signInWithRedirect(auth, provider)
+    // A. LINEアプリ内 -> 外部ブラウザへ
+    if (isLineApp.value) {
+      if (liff.id) {
+        await liff.openWindow({ url: window.location.href, external: true })
+      } else {
+        window.open(window.location.href, '_system')
+      }
+      loading.value = false
+      return
     }
+
+    // 👇 判定ロジックを変更
+    // 「スマホ」かどうかを判定
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+
+    if (isMobile) {
+      // 📱 スマホ (Vercel/Local問わず) -> リダイレクト認証 (安定性重視)
+      await signInWithRedirect(auth, provider)
+    } else {
+      // 💻 PC (Vercel/Local問わず) -> ポップアップ認証 (UX重視)
+      await signInWithPopup(auth, provider)
+      
+      // ポップアップはここで完了するので、そのまま遷移
+      // (リダイレクトの場合はここに来る前に画面が遷移します)
+      
+      // 顧客データ作成 & トップへ (ログイン成功後の処理)
+      // ※currentUserが更新されているはずなので auth.currentUser を使用
+      if (auth.currentUser) {
+        await createCustomerData(auth.currentUser, 'google')
+        router.push('/')
+      }
+    }
+
   } catch (error: any) {
     console.error(error)
     message.value = `Googleログイン失敗: ${error.message}`
