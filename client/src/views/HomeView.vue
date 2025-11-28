@@ -320,9 +320,11 @@ const submitReservation = async () => {
   padding-left: 1rem;
   padding-right: 1rem;
   min-height: 100%;
+  box-sizing: border-box;
+  /* 👈 追加: コンテナ自体もはみ出し防止 */
 }
 
-/* --- タブナビゲーション (フォルダ風) --- */
+/* --- タブナビゲーション --- */
 .sticky-tabs {
   position: sticky;
   top: 60px;
@@ -378,7 +380,7 @@ const submitReservation = async () => {
   border-top-color: #27ae60;
 }
 
-/* --- コンテンツエリア (枠で囲む) --- */
+/* --- コンテンツエリア --- */
 .menu-section-wrapper {
   background: #fff;
   border: 1px solid #ddd;
@@ -387,6 +389,8 @@ const submitReservation = async () => {
   padding: 2rem;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
   margin-bottom: 2rem;
+  box-sizing: border-box;
+  /* 👈 追加 */
 }
 
 .section-title {
@@ -426,7 +430,7 @@ const submitReservation = async () => {
   font-weight: bold;
 }
 
-/* --- メニューリスト (グリッド) --- */
+/* --- メニューリスト --- */
 .menu-list {
   list-style: none;
   padding: 0;
@@ -446,9 +450,8 @@ const submitReservation = async () => {
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-
-  /* 👇 追加: 狭いときに折り返す */
   flex-wrap: wrap;
+  /* 折り返し許可 */
 }
 
 .menu-item:hover {
@@ -473,7 +476,6 @@ const submitReservation = async () => {
   gap: 0.5rem;
   flex: 1;
   min-width: 150px;
-  /* 幅確保 */
 }
 
 .menu-title {
@@ -545,6 +547,7 @@ const submitReservation = async () => {
   background: #3aa876;
 }
 
+/* 🟢 下部アクションバー (ここを修正！) */
 .bottom-action {
   position: fixed;
   bottom: 0;
@@ -560,6 +563,8 @@ const submitReservation = async () => {
   gap: 3rem;
   align-items: center;
   z-index: 100;
+  box-sizing: border-box;
+  /* 👈 これではみ出し防止！ */
 }
 
 .summary {
@@ -616,6 +621,7 @@ const submitReservation = async () => {
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
   max-height: 90vh;
   overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .selected-list {
@@ -645,6 +651,8 @@ textarea {
   font-size: 1.1rem;
   border: 1px solid #ccc;
   border-radius: 4px;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 textarea {
@@ -754,7 +762,6 @@ textarea {
     padding-right: 0;
   }
 
-  /* タブ微調整 */
   .tab-btn {
     font-size: 1rem;
     padding: 0.8rem;
@@ -762,7 +769,6 @@ textarea {
     border-radius: 4px 4px 0 0;
   }
 
-  /* コンテンツエリアを幅いっぱいに */
   .menu-section-wrapper {
     border-radius: 0;
     border-left: none;
@@ -770,19 +776,16 @@ textarea {
     padding: 1.5rem 1rem;
   }
 
-  /* メニューリストを1列に */
   .menu-list {
     grid-template-columns: 1fr;
     gap: 0.8rem;
   }
 
-  /* カード内の余白調整 */
   .menu-item {
     padding: 1rem;
     gap: 0.8rem;
   }
 
-  /* タイトルと金額のバランス */
   .menu-title {
     font-size: 1rem;
   }
@@ -798,14 +801,17 @@ textarea {
     font-size: 1.1rem;
   }
 
+  /* フッターも縦並びにして安全に収める */
   .bottom-action {
     padding: 1rem;
-    gap: 1rem;
+    gap: 0.8rem;
     flex-direction: column;
   }
 
   .book-btn {
     width: 100%;
+    padding: 0.8rem;
+    font-size: 1.1rem;
   }
 
   .summary {

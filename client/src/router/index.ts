@@ -41,6 +41,19 @@ const router = createRouter({
       name: 'admin-menu-settings',
       component: AdminMenuSettingsView,
       meta: { requiresAdmin: true }
+    },
+    {
+      path: '/admin/customers',
+      name: 'admin-customers',
+      component: () => import('../views/AdminCustomerView.vue'),
+      meta: { requiresAdmin: true }
+    },
+    // 👇 追加: 顧客の論理削除一覧
+    {
+      path: '/admin/customers/trash',
+      name: 'admin-customers-trash',
+      component: () => import('../views/AdminDeletedCustomersView.vue'),
+      meta: { requiresAdmin: true }
     }
   ]
 })

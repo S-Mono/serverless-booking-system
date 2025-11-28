@@ -15,9 +15,7 @@ import {
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore'
 import liff from '@line/liff'
-import { useDialogStore } from '../stores/dialog' // ダイアログ利用
 
-const dialog = useDialogStore()
 const router = useRouter()
 
 const isLoginMode = ref(true)
@@ -27,7 +25,6 @@ const loading = ref(false)
 const message = ref('')
 const liffLoading = ref(true)
 const isLineApp = ref(false)
-const liffError = ref('') // LIFFエラー情報
 
 const PSEUDO_DOMAIN = '@local.booking-system'
 const LINE_DOMAIN = '@line.booking-system'
@@ -52,12 +49,12 @@ const createCustomerData = async (user: User, provider: 'google' | 'line' | 'pho
 }
 
 onMounted(async () => {
-  // 1. UA判定 (表示のチラつき防止)
+  // 1. LINEアプリ判定
   if (/Line/i.test(navigator.userAgent)) {
     isLineApp.value = true
   }
 
-  // 2. Googleリダイレクト復帰
+  // 2. Googleリダイレクト復帰チェック
   try {
     const result = await getRedirectResult(auth)
     if (result) {
@@ -67,68 +64,45 @@ onMounted(async () => {
     }
   } catch (error: any) {
     if (error.code !== 'auth/popup-closed-by-user') {
-      message.value = `ログインエラー: ${error.message}`
+      console.error(error)
     }
   }
 
-  // 3. LIFF初期化 (エラーハンドリング強化)
-  try {
-    const liffId = import.meta.env.VITE_LIFF_ID
-    if (!liffId) {
-      throw new Error('VITE_LIFF_ID が設定されていません')
-    }
-
-    await liff.init({ liffId })
-
-    // 初期化成功
-    if (liff.isInClient()) {
-      isLineApp.value = true
-      liffError.value = '' // エラーなし
-    }
-  } catch (error: any) {
-    console.error('LIFF init failed', error)
-    // エラーを画面表示用変数に入れる
-    liffError.value = error.message || 'LIFF初期化不明エラー'
-
-    // 開発中はアラートでも出す
-    dialog.alert(`LIFF初期化エラー:\n${liffError.value}\n\n設定を見直してください。`, 'システムエラー')
-  } finally {
+  // 3. LIFF初期化 (ローカル環境ではスキップして警告を消す)
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    console.log('Localhost detected: Skipping LIFF init')
     liffLoading.value = false
+  } else {
+    // 本番環境のみ実行
+    try {
+      const liffId = import.meta.env.VITE_LIFF_ID
+      if (liffId) {
+        await liff.init({ liffId })
+        if (liff.isInClient()) {
+          isLineApp.value = true
+        }
+      }
+    } catch (error) {
+      console.error('LIFF init failed', error)
+    } finally {
+      liffLoading.value = false
+    }
   }
 })
 
-// 🟢 LINEログイン
+// 🟢 LINEログイン (LIFF)
 const loginWithLine = async () => {
-  // LIFF初期化に失敗している場合
-  if (liffError.value) {
-    dialog.alert(`LIFFが正常に動作していません。\n原因: ${liffError.value}`, 'エラー')
-    return
-  }
-
-  if (!liff.isInClient()) {
-    // ここに来るのは「UAはLINEだがLIFFとして認識されていない」場合
-    const currentUrl = window.location.href
-    dialog.alert(
-      `LINEアプリ内ブラウザとして認識されませんでした。\n\n正しいLIFF URLから開いていますか？\n現在のURL: ${currentUrl}`,
-      'エラー'
-    )
-    return
-  }
-
   if (!liff.isLoggedIn()) {
     liff.login()
     return
   }
-
   loading.value = true
   message.value = 'LINEアカウントを確認中...'
-
   try {
     await setPersistence(auth, browserLocalPersistence)
     const profile = await liff.getProfile()
     const lineUserId = profile.userId
     const lineName = profile.displayName
-
     const firebaseEmail = `line_${lineUserId}${LINE_DOMAIN}`
     const firebasePassword = `line_pass_${lineUserId}`
 
@@ -146,22 +120,22 @@ const loginWithLine = async () => {
     }
     await createCustomerData(user, 'line', lineName)
     router.push('/')
-
   } catch (error: any) {
     console.error(error)
-    dialog.alert(`LINEログイン失敗:\n${error.message}`, 'エラー')
+    message.value = `LINEログイン失敗: ${error.message}`
     loading.value = false
   }
 }
 
-// 🔵 Googleログイン (スマホはリダイレクト)
+// 🔵 Googleログイン
 const loginWithGoogle = async () => {
   loading.value = true
   try {
     await setPersistence(auth, browserLocalPersistence)
     const provider = new GoogleAuthProvider()
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
 
+    // スマホならリダイレクト
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
     if (isMobile) {
       await signInWithRedirect(auth, provider)
     } else {
@@ -186,7 +160,6 @@ const handleAuth = async () => {
     await setPersistence(auth, browserLocalPersistence)
     const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
     let user: User
-
     if (isLoginMode.value) {
       const cred = await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
       user = cred.user
@@ -219,13 +192,10 @@ const handleAuth = async () => {
       <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">
         <span class="line-icon">L</span> LINEアカウントでログイン
       </button>
-
       <button v-else class="google-btn" @click="loginWithGoogle" :disabled="loading">
         <span class="g-icon">G</span> Googleでログイン
       </button>
     </div>
-
-    <p v-if="liffError" class="error-note">⚠️ LINE連携エラー: {{ liffError }}</p>
 
     <div class="divider"><span>または 電話番号</span></div>
 
@@ -255,7 +225,7 @@ const handleAuth = async () => {
 </template>
 
 <style scoped>
-/* 既存スタイル */
+/* CSSは前回と同じ */
 .auth-container {
   max-width: 400px;
   margin: 2rem auto;
@@ -422,15 +392,5 @@ input {
 
 .toggle-mode a:hover {
   text-decoration: underline;
-}
-
-.error-note {
-  color: #e74c3c;
-  font-size: 0.8rem;
-  background: #fff0f0;
-  padding: 0.5rem;
-  border-radius: 4px;
-  text-align: center;
-  margin-bottom: 1rem;
 }
 </style>

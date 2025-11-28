@@ -3,14 +3,15 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
 import { useRouter } from 'vue-router'
-import { useDialogStore } from '../stores/dialog' // 👈 共通ダイアログ
+import { useDialogStore } from '../stores/dialog'
 
 const router = useRouter()
-const dialog = useDialogStore() // 👈 ストア利用
+const dialog = useDialogStore()
 
 interface Staff { id: string; name: string }
 interface Reservation {
   id: string; start_at: Timestamp; end_at: Timestamp; staff_id: string
+  customer_id?: string; // 👈 追加
   customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number }[]; status: string; source?: 'web' | 'phone'; note?: string
 }
 interface Menu { id: string; title: string; duration_min: number; price: number }
@@ -36,11 +37,11 @@ const dragEndTime = ref<Date | null>(null)
 const dragStartX = ref(0)
 
 // --- モーダル管理 ---
-const showModal = ref(false)       // 新規・編集用
-const showDetailModal = ref(false) // 詳細用
-// 🗑️ showDeleteModal は廃止（共通ダイアログを使用）
+const showModal = ref(false)
+const showDetailModal = ref(false)
 
 const selectedReservation = ref<Reservation | null>(null)
+const customerHistory = ref<Reservation[]>([]) // 👈 履歴用
 
 const isEditing = ref(false)
 const editingId = ref<string | null>(null)
@@ -66,28 +67,16 @@ watch(selectedDate, () => { initData(false) })
 const getTaxPrice = (price: number) => Math.ceil(price * (1 + shopConfig.value.tax_rate / 100))
 
 const initData = async (fetchMaster = true) => {
-  // 権限チェック
-  if (auth.currentUser?.phoneNumber) {
-    dialog.alert('権限がありません')
-    router.push('/')
-    return
-  }
-
+  if (auth.currentUser?.phoneNumber) { dialog.alert('権限がありません'); router.push('/'); return }
   loading.value = true
-
-  // 通知許可リクエスト
-  if (Notification.permission === 'default') {
-    Notification.requestPermission()
-  }
+  if (Notification.permission === 'default') Notification.requestPermission()
 
   try {
     if (fetchMaster) {
       const staffSnap = await getDocs(collection(db, 'staffs'))
       staffs.value = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter((s: any) => s.is_working !== false).sort((a: any, b: any) => a.order_priority - b.order_priority) as Staff[]
-
       const menuSnap = await getDocs(collection(db, 'menus'))
       menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Menu[]
-
       const configSnap = await getDoc(doc(db, 'shop_config', 'default_config'))
       if (configSnap.exists()) {
         const data = configSnap.data()
@@ -102,31 +91,18 @@ const initData = async (fetchMaster = true) => {
         if (hours?.end) closeHour.value = parseInt(hours.end.split(':')[0]!, 10)
       }
     }
-
     const startOfDay = new Date(selectedDate.value); startOfDay.setHours(0, 0, 0, 0)
     const endOfDay = new Date(selectedDate.value); endOfDay.setDate(endOfDay.getDate() + 1); endOfDay.setHours(0, 0, 0, 0)
-
     if (unsubscribe) unsubscribe()
-
     const q = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
-
     unsubscribe = onSnapshot(q, (snapshot) => {
       reservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
-
-      // 通知ロジック
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          const data = change.doc.data()
-          const createdAt = data.created_at?.toDate().getTime() || 0
-          const now = new Date().getTime()
-          if (data.source === 'web' && (now - createdAt) < 60000 && !loading.value) {
-            new Notification('✨ 新しいWEB予約が入りました！', {
-              body: `${data.customer_name}様\n${data.menu_items[0]?.title}`
-            })
-          }
+          const data = change.doc.data(); const createdAt = data.created_at?.toDate().getTime() || 0; const now = new Date().getTime()
+          if (data.source === 'web' && (now - createdAt) < 60000 && !loading.value) new Notification('✨ 新しいWEB予約が入りました！', { body: `${data.customer_name}様\n${data.menu_items[0]?.title}` })
         }
       })
-
       loading.value = false
     })
   } catch (e) { console.error(e); loading.value = false }
@@ -136,10 +112,8 @@ const submitReservation = async () => {
   if (!newReservation.value.menu_id) return
   const menu = menus.value.find(m => m.id === newReservation.value.menu_id)
   if (!menu) return
-
   const startDate = new Date(newReservation.value.start_time)
   const endDate = new Date(startDate.getTime() + menu.duration_min * 60000)
-
   const payload = {
     staff_id: newReservation.value.staff_id,
     start_at: Timestamp.fromDate(startDate),
@@ -147,11 +121,8 @@ const submitReservation = async () => {
     customer_name: newReservation.value.customer_name || '電話予約',
     customer_phone: newReservation.value.customer_phone || '',
     menu_items: [{ title: menu.title, duration: menu.duration_min, price: getTaxPrice(menu.price) }],
-    source: 'phone',
-    note: newReservation.value.note || '',
-    status: 'confirmed'
+    source: 'phone', note: newReservation.value.note || '', status: 'confirmed'
   }
-
   try {
     if (isEditing.value && editingId.value) {
       await updateDoc(doc(db, 'reservations', editingId.value), payload)
@@ -161,35 +132,47 @@ const submitReservation = async () => {
       await dialog.alert('予約を追加しました')
     }
     showModal.value = false
-  } catch (e) { console.error(e); dialog.alert('処理に失敗しました') }
+  } catch (e) { console.error(e); dialog.alert('処理失敗') }
 }
 
-// 🗑️ 予約削除 (共通ダイアログ使用)
 const deleteReservation = async (id: string) => {
   const ok = await dialog.confirm('本当に削除しますか？\n（復元できません）', '削除確認', 'danger')
   if (!ok) return
+  try { await deleteDoc(doc(db, 'reservations', id)); showDetailModal.value = false } catch (e) { dialog.alert('削除に失敗しました') }
+}
 
-  try {
-    await deleteDoc(doc(db, 'reservations', id))
-    showDetailModal.value = false // 詳細モーダルも閉じる
-  } catch (e) {
-    console.error(e)
-    dialog.alert('削除に失敗しました')
+const approveReservation = async (id: string) => { try { await updateDoc(doc(db, 'reservations', id), { status: 'confirmed' }); await dialog.alert('予約を確定しました'); showDetailModal.value = false } catch (e) { dialog.alert('承認に失敗しました') } }
+
+// 🔍 予約詳細を開く（履歴取得も行う）
+const openReservationDetail = async (res: Reservation) => {
+  selectedReservation.value = res
+  showDetailModal.value = true
+  customerHistory.value = []
+
+  // 顧客IDがある場合のみ履歴を取得
+  if (res.customer_id) {
+    try {
+      // インデックスエラー回避のため単純クエリで取得し、JS側でソート
+      const q = query(collection(db, 'reservations'), where('customer_id', '==', res.customer_id))
+      const snap = await getDocs(q)
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+      // 新しい順にソート
+      customerHistory.value = list.sort((a, b) => b.start_at.seconds - a.start_at.seconds)
+    } catch (e) {
+      console.error('履歴取得エラー:', e)
+    }
   }
 }
 
-// ✅ 予約確定 (共通ダイアログ使用)
-const approveReservation = async (id: string) => {
-  try {
-    await updateDoc(doc(db, 'reservations', id), { status: 'confirmed' })
-    await dialog.alert('予約を確定しました')
-    showDetailModal.value = false
-  } catch (e) {
-    dialog.alert('承認に失敗しました')
+// 顧客詳細画面へ遷移
+const goToCustomerDetail = () => {
+  if (selectedReservation.value?.customer_id) {
+    // 🟢 open_id パラメータを付与して遷移
+    router.push(`/admin/customers?open_id=${selectedReservation.value.customer_id}`)
+  } else {
+    router.push('/admin/customers')
   }
 }
-
-const openReservationDetail = (res: Reservation) => { selectedReservation.value = res; showDetailModal.value = true }
 
 const openEditModal = (res: Reservation) => {
   const matchedMenu = menus.value.find(m => m.title === res.menu_items[0]?.title)
@@ -248,6 +231,7 @@ const onMouseUp = () => {
   showModal.value = true; isDragging.value = false; dragStaffId.value = null
 }
 const formatTime = (ts: Timestamp) => { const d = ts.toDate(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}` }
+const formatDate = (ts: Timestamp) => { const d = ts.toDate(); return `${d.getMonth() + 1}/${d.getDate()}` }
 const getStaffName = (id: string) => staffs.value.find(s => s.id === id)?.name || '未定'
 const toLocalISOString = (date: Date) => {
   const pad = (n: number) => n < 10 ? '0' + n : n
@@ -300,6 +284,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         <h2>予約管理ダッシュボード</h2>
       </div>
       <div class="header-right">
+        <button @click="router.push('/admin/customers')" class="nav-link-btn">👥 顧客管理</button>
         <div class="status-badge">🟢 リアルタイム接続中</div>
         <button @click="$router.push('/admin/settings')" class="settings-link-btn">⚙ 設定</button>
       </div>
@@ -320,7 +305,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
             <span class="vertical-text">予約リスト</span>
           </div>
         </div>
-
         <div v-if="isSidebarOpen" class="kanban-list-container">
           <div class="kanban-list">
             <transition-group name="list">
@@ -338,10 +322,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
                   <div class="customer-info">
                     <div v-if="res.customer_name" class="c-row"><span class="icon">👤</span> {{ res.customer_name }}
                     </div>
-                    <div v-if="res.customer_phone" class="c-row"><span class="icon">📞</span> {{ res.customer_phone }}
-                    </div>
                   </div>
-                  <div v-if="res.note" class="note-preview" :title="res.note">📝 メモあり</div>
                   <div class="staff-badge">担当: {{ getStaffName(res.staff_id) }}</div>
                 </div>
               </div>
@@ -411,7 +392,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
           <h3>{{ isEditing ? '予約の編集' : '新規予約 (電話受付)' }}</h3>
           <button class="close-x-btn" @click="showModal = false">×</button>
         </div>
-
         <div class="form-group"><label>担当スタッフ</label><select v-model="newReservation.staff_id" disabled>
             <option v-for="s in staffs" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select></div>
@@ -428,7 +408,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
         </div>
-
         <div class="modal-actions right-align">
           <button class="save-btn" @click="submitReservation">{{ isEditing ? '更新する' : '登録する' }}</button>
         </div>
@@ -452,17 +431,33 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
             formatTime(selectedReservation.end_at) }}</div>
           <div class="detail-row"><span class="label">メニュー:</span> {{ selectedReservation.menu_items[0]?.title }}</div>
           <div class="detail-row"><span class="label">顧客名:</span> {{ selectedReservation.customer_name || '名称未設定' }}
+            <button v-if="selectedReservation.customer_id" class="link-text-btn" @click="goToCustomerDetail">➡
+              顧客詳細へ</button>
           </div>
           <div class="detail-row"><span class="label">電話:</span> {{ selectedReservation.customer_phone || 'なし' }}</div>
           <div class="detail-row"><span class="label">担当:</span> {{ getStaffName(selectedReservation.staff_id) }}</div>
           <div class="detail-row"><span class="label">受付:</span> <span
-              :class="selectedReservation.source === 'phone' ? 'tag-phone' : 'tag-web'">{{ selectedReservation.source
-                ===
-                'phone' ? '電話予約' : 'WEB予約' }}</span></div>
+              :class="selectedReservation.status === 'pending' ? 'tag-pending' : (selectedReservation.source === 'phone' ? 'tag-phone' : 'tag-web')">{{
+                selectedReservation.status === 'pending' ? '仮予約' : (selectedReservation.source === 'phone' ? '電話予約' :
+                  'WEB予約')
+              }}</span></div>
           <div class="detail-note">
             <div class="label">メモ:</div>
             <div class="note-content">{{ selectedReservation.note || '（なし）' }}</div>
           </div>
+        </div>
+
+        <div class="history-area">
+          <h4>📋 この顧客の予約履歴</h4>
+          <ul v-if="customerHistory.length > 0" class="history-list">
+            <li v-for="h in customerHistory" :key="h.id" class="history-item"
+              :class="{ 'current': h.id === selectedReservation.id }">
+              <span class="h-date">{{ formatDate(h.start_at) }}</span>
+              <span class="h-menu">{{ h.menu_items[0]?.title }}</span>
+              <span class="h-status" :class="h.status">{{ h.status === 'confirmed' ? '済' : '未' }}</span>
+            </li>
+          </ul>
+          <p v-else class="no-history">履歴はありません</p>
         </div>
 
         <div class="modal-actions split">
@@ -471,11 +466,12 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         </div>
       </div>
     </div>
+
   </div>
 </template>
 
 <style scoped>
-/* 共通スタイル */
+/* (既存CSS) */
 .admin-container {
   height: 100vh;
   display: flex;
@@ -487,7 +483,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 .admin-header {
   background: #2c3e50;
   color: white;
-  padding: 0.5rem 1rem;
+  padding: 0 1rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -511,7 +507,8 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   white-space: nowrap;
 }
 
-.settings-link-btn {
+.settings-link-btn,
+.nav-link-btn {
   background: rgba(255, 255, 255, 0.2);
   color: white;
   border: none;
@@ -522,8 +519,13 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   white-space: nowrap;
 }
 
-.settings-link-btn:hover {
+.settings-link-btn:hover,
+.nav-link-btn:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.nav-link-btn {
+  margin-right: 0.5rem;
 }
 
 .admin-body {
@@ -548,9 +550,10 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 .panel-left.collapsed {
   width: 40px;
   min-width: 40px;
+  padding: 1rem 0;
   align-items: center;
-  cursor: pointer;
   background: #dcdde1;
+  cursor: pointer;
 }
 
 .panel-left.collapsed:hover {
@@ -655,7 +658,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   border-left-color: #e67e22;
 }
 
-/* 🟣 仮予約のスタイル (ここを追加！) */
 .kanban-card.res-pending {
   border-left-color: #9b59b6;
   background-color: #f3e5f5;
@@ -969,7 +971,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   background-color: #e67e22;
 }
 
-/* 🟣 仮予約バー (ここを追加！) */
 .reservation-bar.res-pending {
   background-color: #9b59b6;
   background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(255, 255, 255, 0.2) 5px, rgba(255, 255, 255, 0.2) 10px);
@@ -1027,7 +1028,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   padding: 1.5rem;
   border-radius: 8px;
   width: 90%;
-  max-width: 400px;
+  max-width: 450px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
   max-height: 90vh;
   overflow-y: auto;
@@ -1234,6 +1235,91 @@ textarea {
 .tag-web {
   color: #3498db;
   font-weight: bold;
+}
+
+.tag-pending {
+  color: #9b59b6;
+  font-weight: bold;
+}
+
+/* 履歴リスト */
+.history-area {
+  border-top: 2px dashed #eee;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.history-area h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: #555;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 0.85rem;
+}
+
+.history-item.current {
+  background: #e3f2fd;
+  font-weight: bold;
+}
+
+.h-date {
+  color: #333;
+}
+
+.h-menu {
+  color: #666;
+}
+
+.h-status {
+  font-size: 0.7rem;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: white;
+}
+
+.h-status.confirmed {
+  background: #27ae60;
+}
+
+.h-status.pending {
+  background: #9b59b6;
+}
+
+.no-history {
+  color: #999;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.link-text-btn {
+  background: none;
+  border: none;
+  color: #3498db;
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  margin-left: 0.5rem;
+}
+
+.link-text-btn:hover {
+  color: #1d6fa5;
 }
 
 @media (max-width: 768px) {
