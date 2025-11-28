@@ -124,6 +124,9 @@ const loginWithLine = async () => {
       }
     }
     await createCustomerData(user, 'line', lineName)
+    // 成功時はオーバーレイをクリアしてから遷移
+    socialAuth.value = null
+    loading.value = false
     router.push('/')
   } catch (error: any) {
     console.error(error)
