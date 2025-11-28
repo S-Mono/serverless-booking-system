@@ -9,12 +9,15 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  setPersistence,
+  browserLocalPersistence,
   type User
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore'
 import liff from '@line/liff'
-// import { seedDatabase } from '../lib/seed' // 不要なら削除
+import { useDialogStore } from '../stores/dialog' // ダイアログ利用
 
+const dialog = useDialogStore()
 const router = useRouter()
 
 const isLoginMode = ref(true)
@@ -24,18 +27,16 @@ const loading = ref(false)
 const message = ref('')
 const liffLoading = ref(true)
 const isLineApp = ref(false)
+const liffError = ref('') // LIFFエラー情報
 
 const PSEUDO_DOMAIN = '@local.booking-system'
 const LINE_DOMAIN = '@line.booking-system'
 
-// 🟢 顧客データの自動作成/確認
 const createCustomerData = async (user: User, provider: 'google' | 'line' | 'phone', name?: string) => {
   try {
     const docRef = doc(db, 'customers', user.uid)
     const docSnap = await getDoc(docRef)
-
     if (!docSnap.exists()) {
-      // データがない = 新規ユーザーなので作成
       await setDoc(docRef, {
         name_kana: name || user.displayName || 'ゲスト',
         phone_number: provider === 'phone' ? user.email?.split('@')[0] : '',
@@ -46,162 +47,130 @@ const createCustomerData = async (user: User, provider: 'google' | 'line' | 'pho
         created_at: Timestamp.now(),
         updated_at: Timestamp.now()
       })
-      console.log('新規顧客データを作成しました')
     }
-  } catch (e) {
-    console.error('顧客データ作成エラー:', e)
-  }
+  } catch (e) { console.error('顧客データ作成エラー:', e) }
 }
 
 onMounted(async () => {
-  // 1. LINEアプリ判定
+  // 1. UA判定 (表示のチラつき防止)
   if (/Line/i.test(navigator.userAgent)) {
     isLineApp.value = true
   }
 
-  // 🟢 2. Googleリダイレクト復帰チェック (これが抜けていました！)
+  // 2. Googleリダイレクト復帰
   try {
     const result = await getRedirectResult(auth)
     if (result) {
-      console.log('Google Login Success (Redirect)')
-      // 顧客データ作成 & トップへ
       await createCustomerData(result.user, 'google')
       router.push('/')
       return
     }
   } catch (error: any) {
-    // ユーザーキャンセル等は無視
-    if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/redirect-cancelled-by-user') {
-      console.error(error)
+    if (error.code !== 'auth/popup-closed-by-user') {
       message.value = `ログインエラー: ${error.message}`
     }
   }
 
-  // 3. LIFF初期化
+  // 3. LIFF初期化 (エラーハンドリング強化)
   try {
     const liffId = import.meta.env.VITE_LIFF_ID
-    if (liffId) {
-      await liff.init({ liffId })
-      if (liff.isInClient()) {
-        isLineApp.value = true
-      }
+    if (!liffId) {
+      throw new Error('VITE_LIFF_ID が設定されていません')
     }
-  } catch (error) {
+
+    await liff.init({ liffId })
+
+    // 初期化成功
+    if (liff.isInClient()) {
+      isLineApp.value = true
+      liffError.value = '' // エラーなし
+    }
+  } catch (error: any) {
     console.error('LIFF init failed', error)
+    // エラーを画面表示用変数に入れる
+    liffError.value = error.message || 'LIFF初期化不明エラー'
+
+    // 開発中はアラートでも出す
+    dialog.alert(`LIFF初期化エラー:\n${liffError.value}\n\n設定を見直してください。`, 'システムエラー')
   } finally {
     liffLoading.value = false
   }
 })
 
-// 🟢 LINEアカウントでログイン (LIFF専用) -- デバッグ版
+// 🟢 LINEログイン
 const loginWithLine = async () => {
-  // デバッグ1: 関数が呼ばれたか
-  alert('LINEログイン処理を開始します')
+  // LIFF初期化に失敗している場合
+  if (liffError.value) {
+    dialog.alert(`LIFFが正常に動作していません。\n原因: ${liffError.value}`, 'エラー')
+    return
+  }
+
+  if (!liff.isInClient()) {
+    // ここに来るのは「UAはLINEだがLIFFとして認識されていない」場合
+    const currentUrl = window.location.href
+    dialog.alert(
+      `LINEアプリ内ブラウザとして認識されませんでした。\n\n正しいLIFF URLから開いていますか？\n現在のURL: ${currentUrl}`,
+      'エラー'
+    )
+    return
+  }
+
+  if (!liff.isLoggedIn()) {
+    liff.login()
+    return
+  }
+
+  loading.value = true
+  message.value = 'LINEアカウントを確認中...'
 
   try {
-    // デバッグ2: LIFFの状態確認
-    if (!liff.isInClient()) {
-      alert('エラー: LINEアプリ内ではありません')
-      return
-    }
-    if (!liff.isLoggedIn()) {
-      alert('未ログインのため、LINEログイン画面へ移動します')
-      liff.login()
-      return
-    }
-
-    loading.value = true
-    message.value = 'LINEアカウントを確認中...'
-
-    // デバッグ3: プロフィール取得開始
-    alert('プロフィールを取得します...')
+    await setPersistence(auth, browserLocalPersistence)
     const profile = await liff.getProfile()
-    alert(`取得成功: ${profile.displayName} (${profile.userId.substring(0, 5)}...)`)
-
     const lineUserId = profile.userId
     const lineName = profile.displayName
-    
+
     const firebaseEmail = `line_${lineUserId}${LINE_DOMAIN}`
     const firebasePassword = `line_pass_${lineUserId}`
 
-    alert(`Firebase認証を開始します...\nEmail: ${firebaseEmail}`)
-
-    let user: any
+    let user: User
     try {
-      // A. ログイン試行
       const cred = await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
       user = cred.user
-      alert('既存ユーザーとしてログイン成功！')
     } catch (error: any) {
-      alert(`ログイン失敗(新規作成へ): ${error.code}`)
-      
-      // B. 新規登録試行
       if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
         const cred = await createUserWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
         user = cred.user
-        alert('新規ユーザー作成成功！')
       } else {
         throw error
       }
     }
-
-    // 顧客データ作成
-    alert('顧客データを作成/確認します...')
     await createCustomerData(user, 'line', lineName)
-    
-    alert('全て完了！トップページへ移動します')
     router.push('/')
 
   } catch (error: any) {
     console.error(error)
-    // エラー内容をアラートで表示
-    alert(`【エラー発生】\n${error.code}\n${error.message}`)
-    message.value = `LINEログイン失敗: ${error.message}`
+    dialog.alert(`LINEログイン失敗:\n${error.message}`, 'エラー')
     loading.value = false
   }
 }
 
-// 🔵 Googleログイン処理
+// 🔵 Googleログイン (スマホはリダイレクト)
 const loginWithGoogle = async () => {
   loading.value = true
-  message.value = ''
-  
   try {
+    await setPersistence(auth, browserLocalPersistence)
     const provider = new GoogleAuthProvider()
-
-    // A. LINEアプリ内 -> 外部ブラウザへ
-    if (isLineApp.value) {
-      if (liff.id) {
-        await liff.openWindow({ url: window.location.href, external: true })
-      } else {
-        window.open(window.location.href, '_system')
-      }
-      loading.value = false
-      return
-    }
-
-    // 👇 判定ロジックを変更
-    // 「スマホ」かどうかを判定
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
 
     if (isMobile) {
-      // 📱 スマホ (Vercel/Local問わず) -> リダイレクト認証 (安定性重視)
       await signInWithRedirect(auth, provider)
     } else {
-      // 💻 PC (Vercel/Local問わず) -> ポップアップ認証 (UX重視)
-      await signInWithPopup(auth, provider)
-      
-      // ポップアップはここで完了するので、そのまま遷移
-      // (リダイレクトの場合はここに来る前に画面が遷移します)
-      
-      // 顧客データ作成 & トップへ (ログイン成功後の処理)
-      // ※currentUserが更新されているはずなので auth.currentUser を使用
-      if (auth.currentUser) {
-        await createCustomerData(auth.currentUser, 'google')
+      const result = await signInWithPopup(auth, provider)
+      if (result.user) {
+        await createCustomerData(result.user, 'google')
         router.push('/')
       }
     }
-
   } catch (error: any) {
     console.error(error)
     message.value = `Googleログイン失敗: ${error.message}`
@@ -214,6 +183,7 @@ const handleAuth = async () => {
   loading.value = true
   message.value = ''
   try {
+    await setPersistence(auth, browserLocalPersistence)
     const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
     let user: User
 
@@ -224,10 +194,8 @@ const handleAuth = async () => {
       const cred = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
       user = cred.user
     }
-
     await createCustomerData(user, 'phone')
     router.push('/')
-
   } catch (error: any) {
     console.error(error)
     if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
@@ -251,10 +219,13 @@ const handleAuth = async () => {
       <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">
         <span class="line-icon">L</span> LINEアカウントでログイン
       </button>
+
       <button v-else class="google-btn" @click="loginWithGoogle" :disabled="loading">
         <span class="g-icon">G</span> Googleでログイン
       </button>
     </div>
+
+    <p v-if="liffError" class="error-note">⚠️ LINE連携エラー: {{ liffError }}</p>
 
     <div class="divider"><span>または 電話番号</span></div>
 
@@ -284,7 +255,7 @@ const handleAuth = async () => {
 </template>
 
 <style scoped>
-/* CSSは変更なし */
+/* 既存スタイル */
 .auth-container {
   max-width: 400px;
   margin: 2rem auto;
@@ -451,5 +422,15 @@ input {
 
 .toggle-mode a:hover {
   text-decoration: underline;
+}
+
+.error-note {
+  color: #e74c3c;
+  font-size: 0.8rem;
+  background: #fff0f0;
+  padding: 0.5rem;
+  border-radius: 4px;
+  text-align: center;
+  margin-bottom: 1rem;
 }
 </style>
