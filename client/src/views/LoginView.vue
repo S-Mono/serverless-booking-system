@@ -6,62 +6,57 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithPopup,      // 👈 追加
-  signInWithRedirect,   // 👈 追加
-  getRedirectResult     // 👈 追加
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult
 } from 'firebase/auth'
 import liff from '@line/liff'
-import { seedDatabase } from '../lib/seed' // 開発用ツール
+import { seedDatabase } from '../lib/seed'
 
 const router = useRouter()
 
-// モード切替 (ログイン / 新規登録)
 const isLoginMode = ref(true)
-
-// 入力値
 const phoneNumber = ref('')
 const password = ref('')
-
-// 状態
 const loading = ref(false)
 const message = ref('')
-const liffLoading = ref(true) // LIFF初期化中フラグ
+const liffLoading = ref(true)
 
-// 擬似メールドメイン
+// LINEアプリ内かどうかの判定フラグ
+const isLineApp = ref(false)
+
 const PSEUDO_DOMAIN = '@local.booking-system'
 
-// 🟢 初期化処理 (リダイレクト復帰 & LIFF初期化)
 onMounted(async () => {
-  // 1. Googleリダイレクトログインからの帰還チェック
+  // 1. ユーザーエージェントでLINEアプリ判定 (LIFF init前でも判定可能)
+  if (/Line/i.test(navigator.userAgent)) {
+    isLineApp.value = true
+  }
+
+  // 2. Googleリダイレクトログインからの帰還チェック
   try {
     const result = await getRedirectResult(auth)
     if (result) {
-      console.log('Google Login Success (Redirect):', result.user)
       router.push('/')
       return
     }
   } catch (error: any) {
-    console.error('Google Redirect Error:', error)
-    // ユーザーキャンセルなどは無視して良いが、エラーなら表示
     if (error.code !== 'auth/popup-closed-by-user') {
       message.value = `ログインエラー: ${error.message}`
     }
   }
 
-  // 2. LIFF初期化
+  // 3. LIFF初期化
   try {
     const liffId = import.meta.env.VITE_LIFF_ID
     if (liffId) {
       await liff.init({ liffId })
-
-      // LINEブラウザ内ならメールアドレス自動入力などの補助
-      if (liff.isLoggedIn()) {
-        const decoded = liff.getDecodedIDToken()
-        if (decoded && decoded.email) {
-          console.log('LINE Email:', decoded.email)
-          // 必要ならここに自動入力ロジックを記述
-        }
+      // LIFF初期化成功後、念のため再判定
+      if (liff.isInClient()) {
+        isLineApp.value = true
       }
+    } else {
+      console.error('VITE_LIFF_ID が設定されていません')
     }
   } catch (error) {
     console.error('LIFF init failed', error)
@@ -77,27 +72,33 @@ const loginWithGoogle = async () => {
   try {
     const provider = new GoogleAuthProvider()
 
-    // 🏠 localhost (開発中) ならポップアップを使う
-    // (ローカルでのリダイレクトはCookie設定などでエラーになりやすいため)
+    // 📱 A. LINEアプリ内の場合 -> 外部ブラウザで開き直す
+    if (isLineApp.value) {
+      if (!liff.id) {
+        alert('エラー: LIFF IDが設定されていないか、初期化に失敗しました。')
+        loading.value = false
+        return
+      }
+      // 外部ブラウザで現在のページを開く
+      await liff.openWindow({
+        url: window.location.href,
+        external: true
+      })
+      // ここで処理終了（ユーザーは外部ブラウザへ移動する）
+      loading.value = false
+      return
+    }
+
+    // 🏠 B. PC・ローカル開発 (localhost) -> ポップアップ
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       await signInWithPopup(auth, provider)
       router.push('/')
     }
-    // 🚀 本番環境 (LIFF/スマホ) ならリダイレクトを使う
+    // 🚀 C. スマホの外部ブラウザ (Chrome/Safari) -> リダイレクト
     else {
-      // LIFF内なら外部ブラウザへ (Googleのセキュリティポリシー対策)
-      if (liff.isInClient()) {
-        await liff.openWindow({
-          url: window.location.href,
-          external: true
-        })
-        loading.value = false
-        return
-      }
-      // 通常ブラウザならリダイレクト認証
       await signInWithRedirect(auth, provider)
-      // ※リダイレクトするため、ここから下の行は実行されません
     }
+
   } catch (error: any) {
     console.error(error)
     message.value = `Googleログイン失敗: ${error.message}`
@@ -105,14 +106,11 @@ const loginWithGoogle = async () => {
   }
 }
 
-// 📞 電話番号認証処理 (既存)
 const handleAuth = async () => {
   loading.value = true
   message.value = ''
-
   try {
     const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
-
     if (isLoginMode.value) {
       await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
       router.push('/')
@@ -121,7 +119,6 @@ const handleAuth = async () => {
       message.value = '登録完了！自動的にログインしました。'
       router.push('/')
     }
-
   } catch (error: any) {
     console.error(error)
     if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
@@ -143,7 +140,9 @@ const handleAuth = async () => {
 
     <div class="social-login">
       <button class="google-btn" @click="loginWithGoogle" :disabled="loading">
-        <span class="g-icon">G</span> Googleでログイン
+        <span class="g-icon">G</span>
+        <span v-if="isLineApp">ブラウザを開いてGoogleログイン</span>
+        <span v-else>Googleでログイン</span>
       </button>
     </div>
 
@@ -154,12 +153,10 @@ const handleAuth = async () => {
         <label>電話番号 (ハイフンなし)</label>
         <input type="tel" v-model="phoneNumber" placeholder="09012345678" required pattern="[0-9]*" />
       </div>
-
       <div class="form-group">
         <label>パスワード</label>
         <input type="password" v-model="password" placeholder="6文字以上" required minlength="6" />
       </div>
-
       <button type="submit" class="submit-btn" :disabled="loading">
         {{ loading ? '処理中...' : (isLoginMode ? 'ログイン' : '登録する') }}
       </button>
@@ -176,15 +173,13 @@ const handleAuth = async () => {
 
     <div class="dev-tools">
       <p class="dev-label">開発用ツール</p>
-      <button @click="seedDatabase" class="seed-btn">
-        初期データをDBに投入
-      </button>
+      <button @click="seedDatabase" class="seed-btn">初期データをDBに投入</button>
     </div>
-
   </div>
 </template>
 
 <style scoped>
+/* CSSは変更なし */
 .auth-container {
   max-width: 400px;
   margin: 2rem auto;
@@ -206,7 +201,6 @@ h2 {
   margin-bottom: 1rem;
 }
 
-/* Googleボタン */
 .social-login {
   margin-bottom: 1.5rem;
 }
@@ -326,7 +320,6 @@ input {
   text-decoration: underline;
 }
 
-/* 開発用ツール */
 .dev-tools {
   margin-top: 3rem;
   border-top: 1px dashed #ccc;
