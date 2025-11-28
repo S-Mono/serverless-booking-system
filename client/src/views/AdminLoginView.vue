@@ -11,22 +11,18 @@ const route = useRoute()
 const errorMsg = ref('')
 const loading = ref(false)
 
-const handleLogin = async () =>
-{
+const handleLogin = async () => {
   loading.value = true
   errorMsg.value = ''
-  try
-  {
+  try {
     await signInWithEmailAndPassword(auth, email.value, password.value)
     // ログイン成功したら、URLのkeyパラメータを維持したままダッシュボードへ
     const key = route.query.key
     router.push(`/admin?key=${key}`)
-  } catch (e: any)
-  {
+  } catch (e: any) {
     console.error(e)
     errorMsg.value = 'ログインに失敗しました。'
-  } finally
-  {
+  } finally {
     loading.value = false
   }
 }
@@ -59,7 +55,7 @@ const handleLogin = async () =>
 
 <style scoped>
 .login-container {
-  height: 100vh;
+  height: 100%;
   display: flex;
   justify-content: center;
   align-items: center;

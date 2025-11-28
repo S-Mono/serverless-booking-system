@@ -16,10 +16,8 @@ const isAdminPage = computed(() => route.path.startsWith('/admin'))
 const customerName = ref('') // 👈 顧客名保持用
 
 // ユーザー名取得ロジック
-const fetchCustomerName = async (user: any) =>
-{
-  if (!user)
-  {
+const fetchCustomerName = async (user: any) => {
+  if (!user) {
     customerName.value = ''
     return
   }
@@ -27,43 +25,34 @@ const fetchCustomerName = async (user: any) =>
   // 管理画面の時はID表示のままで良い場合、ここで分岐も可能
   // 今回は顧客名があればそれを優先表示します
 
-  try
-  {
+  try {
     // 1. UIDで検索
     let q = query(collection(db, 'customers'), where('id', '==', user.uid)) // ※SeedではID=phoneだったりするので注意が必要ですが、MyPageで保存したデータはUID=DocIDになっています
     // 念のため電話番号(擬似メアド)でも検索
     const phone = user.email?.split('@')[0]
-    if (phone)
-    {
+    if (phone) {
       q = query(collection(db, 'customers'), where('phone_number', '==', phone))
     }
 
     const snapshot = await getDocs(q)
-    if (!snapshot.empty)
-    {
+    if (!snapshot.empty) {
       customerName.value = snapshot.docs[0]!.data().name_kana
-    } else
-    {
+    } else {
       // 未登録ならゲスト
       customerName.value = 'ゲスト'
     }
-  } catch (e)
-  {
+  } catch (e) {
     console.error(e)
     customerName.value = 'ゲスト'
   }
 }
 
-onMounted(() =>
-{
-  onAuthStateChanged(auth, async (user) =>
-  {
-    if (user)
-    {
+onMounted(() => {
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
       userStore.setUser(user)
       await fetchCustomerName(user)
-    } else
-    {
+    } else {
       userStore.setUser(null)
       customerName.value = ''
     }
@@ -73,16 +62,13 @@ onMounted(() =>
 const toggleMenu = () => isMenuOpen.value = !isMenuOpen.value
 const closeMenu = () => isMenuOpen.value = false
 
-const handleLogout = async () =>
-{
-  try
-  {
+const handleLogout = async () => {
+  try {
     await signOut(auth)
     closeMenu()
     customerName.value = ''
     router.push('/login')
-  } catch (error)
-  {
+  } catch (error) {
     console.error('Logout failed:', error)
   }
 }
@@ -128,26 +114,32 @@ const handleLogout = async () =>
 .app-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* 固定高さにしてページ全体のドキュメントスクロールを防止する（子要素で個別にスクロールする） */
+  height: 100vh;
+  overflow: hidden;
+  /* デフォルトではスクロール禁止 */
 }
 
 header {
   background-color: #333;
   color: white;
-  height: 60px;
+  height: 75px;
   position: sticky;
   top: 0;
   z-index: 100;
   width: 100%;
+  /* 👇 追加: Flexコンテナ内でヘッダーが押し潰されないように固定 */
+  flex-shrink: 0;
 }
 
 main {
   flex: 1;
   width: 100%;
+  height: 100vh;
 }
 
 .app-layout.admin-mode {
-  height: 100vh;
+  max-height: 100vh;
   overflow: hidden;
 }
 
@@ -158,6 +150,12 @@ main {
 .app-layout.admin-mode main {
   overflow: hidden;
   height: calc(100vh - 60px);
+}
+
+/* 参考: 特定ビュー（管理画面＞設定など）で内部スクロールを許可したい場合は
+   `.app-layout` に `allow-scroll` クラスを付与してください。 */
+.app-layout.allow-scroll main {
+  overflow-y: auto;
 }
 
 .container {

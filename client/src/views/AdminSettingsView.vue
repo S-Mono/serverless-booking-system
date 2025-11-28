@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { db } from '../lib/firebase'
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
@@ -124,7 +124,16 @@ const handleSeed = async () => {
 }
 const goBack = () => router.push('/admin')
 
-onMounted(() => { fetchData() })
+onMounted(() => {
+  // 管理画面の設定ページでは画面内スクロールを有効にする
+  document.querySelector('.app-layout')?.classList.add('allow-scroll')
+  fetchData()
+})
+
+onUnmounted(() => {
+  // 離脱時はクラスを取り除き、他ページのスクロールを抑止する
+  document.querySelector('.app-layout')?.classList.remove('allow-scroll')
+})
 </script>
 
 <template>

@@ -471,15 +471,20 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 </template>
 
 <style scoped>
-/* (既存CSS) */
+/* --- 全体レイアウト --- */
+/* 画面いっぱいに広げる */
 .admin-container {
-  height: 100vh;
+  height: 100%;
+  /* 親のmainタグの高さに合わせる */
+  width: 100%;
   display: flex;
   flex-direction: column;
   background-color: #f4f5f7;
-  width: 100%;
+  overflow: hidden;
+  /* 外側へのスクロールを禁止 */
 }
 
+/* ヘッダー */
 .admin-header {
   background: #2c3e50;
   color: white;
@@ -487,8 +492,9 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: 45px;
+  height: 50px;
   flex-shrink: 0;
+  /* 縮まない */
 }
 
 .header-right {
@@ -507,8 +513,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   white-space: nowrap;
 }
 
-.settings-link-btn,
-.nav-link-btn {
+.settings-link-btn {
   background: rgba(255, 255, 255, 0.2);
   color: white;
   border: none;
@@ -519,25 +524,25 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   white-space: nowrap;
 }
 
-.settings-link-btn:hover,
-.nav-link-btn:hover {
+.settings-link-btn:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 
-.nav-link-btn {
-  margin-right: 0.5rem;
-}
-
+/* ボディエリア (ここより下で横並び) */
 .admin-body {
   flex: 1;
+  /* 残りの高さを埋める */
   display: flex;
   overflow: hidden;
+  /* 内部ではみ出した分は隠す(子要素でスクロール) */
   width: 100%;
   position: relative;
 }
 
+/* --- 左パネル (予約リスト) --- */
 .panel-left {
-  width: 35%;
+  width: 350px;
+  /* 固定幅に変更(または35%) */
   min-width: 300px;
   background: #ebecf0;
   border-right: 1px solid #ddd;
@@ -550,10 +555,9 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 .panel-left.collapsed {
   width: 40px;
   min-width: 40px;
-  padding: 1rem 0;
   align-items: center;
-  background: #dcdde1;
   cursor: pointer;
+  background: #dcdde1;
 }
 
 .panel-left.collapsed:hover {
@@ -565,10 +569,13 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  min-height: 35px;
-  padding: 0.5rem 1rem;
+  height: 40px;
+  /* 固定高さ */
+  padding: 0 1rem;
   box-sizing: border-box;
   flex-shrink: 0;
+  background-color: #ebecf0;
+  border-bottom: 1px solid #ddd;
 }
 
 .panel-header h3 {
@@ -608,17 +615,19 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   font-size: 0.9rem;
 }
 
+/* リスト部分のスクロールエリア */
 .kanban-list-container {
   flex: 1;
   overflow-y: auto;
-  padding: 0 0.8rem 0.8rem 0.8rem;
+  /* 縦スクロール */
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 .kanban-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  align-items: flex-end;
   width: 100%;
 }
 
@@ -629,6 +638,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   font-size: 0.9rem;
 }
 
+/* --- カード --- */
 .kanban-card {
   background: white;
   padding: 0.6rem;
@@ -640,13 +650,13 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   border-left: 4px solid #ccc;
   transition: all 0.3s ease;
   width: 100%;
-  max-width: 450px;
   position: relative;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .kanban-card:hover {
-  transform: translateX(-2px);
+  transform: translateX(2px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
@@ -660,14 +670,14 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 
 .kanban-card.res-pending {
   border-left-color: #9b59b6;
-  background-color: #f3e5f5;
+  background-color: #fbfaff;
 }
 
 .status-icon-pending {
   color: #fff;
   background-color: #9b59b6;
   font-weight: bold;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   padding: 2px 6px;
   border-radius: 4px;
   margin-top: 4px;
@@ -701,18 +711,25 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  overflow: hidden;
 }
 
 .menu-title {
   font-weight: bold;
   font-size: 0.9rem;
   line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .customer-info {
   font-size: 0.8rem;
   color: #444;
   line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .c-row {
@@ -742,40 +759,39 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   font-weight: bold;
 }
 
+/* --- 右パネル --- */
 .panel-right {
   flex: 1;
-  overflow-x: auto;
-  padding: 0.5rem;
-  background: white;
-  user-select: none;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  /* 内部スクロールのみ許可 */
+  background: white;
+  position: relative;
 }
 
+/* カレンダーバー */
 .calendar-bar {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 0.5rem;
+  padding: 0.5rem;
   background: #f9f9f9;
-  padding: 0.4rem;
-  border-radius: 6px;
-  border: 1px solid #eee;
-  position: relative;
-  z-index: 20;
+  border-bottom: 1px solid #eee;
   flex-shrink: 0;
+  z-index: 20;
 }
 
 .current-date .date-text {
-  font-size: 1rem;
+  font-size: 1.1rem;
   font-weight: bold;
   color: #333;
 }
 
 .date-nav-btn,
 .today-btn {
-  padding: 0.2rem 0.8rem;
+  padding: 0.3rem 0.8rem;
   font-size: 0.85rem;
   border-radius: 4px;
   cursor: pointer;
@@ -856,12 +872,16 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   visibility: hidden;
 }
 
+/* タイムライン */
 .timeline-container {
-  min-width: 100%;
-  border: 1px solid #ddd;
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow-x: auto;
+  /* 横スクロール */
+  overflow-y: hidden;
+  /* 縦は中身でスクロール */
+  position: relative;
 }
 
 .timeline-header {
@@ -870,19 +890,26 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   background: #f9f9f9;
   border-bottom: 1px solid #ddd;
   flex-shrink: 0;
+  min-width: 100%;
 }
 
 .staff-header-cell {
   width: 80px;
   flex-shrink: 0;
   border-right: 1px solid #ddd;
+  position: sticky;
+  left: 0;
+  background: #f9f9f9;
+  z-index: 10;
 }
 
 .time-scale {
   flex: 1;
   display: flex;
+  min-width: 800px;
 }
 
+/* 最低幅確保 */
 .time-label-cell {
   flex: 1;
   border-right: 1px solid transparent;
@@ -896,12 +923,15 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 .timeline-body {
   flex: 1;
   overflow-y: auto;
+  /* 縦スクロール */
+  min-width: 100%;
 }
 
 .staff-row {
   display: flex;
   height: 60px;
   border-bottom: 1px solid #eee;
+  min-width: 800px;
 }
 
 .staff-cell {
@@ -914,6 +944,9 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   background: #f9f9f9;
   border-right: 1px solid #ddd;
   font-size: 0.85rem;
+  position: sticky;
+  left: 0;
+  z-index: 5;
 }
 
 .timeline-cell {
@@ -988,6 +1021,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   z-index: 5;
 }
 
+/* アニメーション */
 .list-enter-active,
 .list-leave-active {
   transition: all 0.5s ease;
@@ -1010,6 +1044,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   opacity: 0;
 }
 
+/* モーダル共通 */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -1028,7 +1063,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   padding: 1.5rem;
   border-radius: 8px;
   width: 90%;
-  max-width: 450px;
+  max-width: 400px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
   max-height: 90vh;
   overflow-y: auto;
@@ -1131,6 +1166,11 @@ textarea {
   padding: 0.5rem 1rem;
   border-radius: 4px;
   cursor: pointer;
+}
+
+/* 詳細モーダル */
+.detail-modal {
+  max-width: 450px;
 }
 
 .detail-body {
@@ -1237,89 +1277,21 @@ textarea {
   font-weight: bold;
 }
 
-.tag-pending {
-  color: #9b59b6;
-  font-weight: bold;
-}
-
-/* 履歴リスト */
-.history-area {
-  border-top: 2px dashed #eee;
-  margin-top: 1rem;
-  padding-top: 1rem;
-}
-
-.history-area h4 {
-  margin: 0 0 0.5rem 0;
-  font-size: 0.95rem;
-  color: #555;
-}
-
-.history-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  max-height: 150px;
-  overflow-y: auto;
-  border: 1px solid #f0f0f0;
-  border-radius: 4px;
-}
-
-.history-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid #f0f0f0;
-  font-size: 0.85rem;
-}
-
-.history-item.current {
-  background: #e3f2fd;
-  font-weight: bold;
-}
-
-.h-date {
-  color: #333;
-}
-
-.h-menu {
-  color: #666;
-}
-
-.h-status {
-  font-size: 0.7rem;
-  padding: 1px 4px;
-  border-radius: 4px;
-  color: white;
-}
-
-.h-status.confirmed {
-  background: #27ae60;
-}
-
-.h-status.pending {
-  background: #9b59b6;
-}
-
-.no-history {
-  color: #999;
-  font-size: 0.85rem;
+.delete-modal {
+  max-width: 350px;
   text-align: center;
-  padding: 0.5rem;
 }
 
-.link-text-btn {
-  background: none;
-  border: none;
-  color: #3498db;
-  cursor: pointer;
-  font-size: 0.8rem;
-  text-decoration: underline;
-  margin-left: 0.5rem;
+.delete-msg {
+  margin: 1.5rem 0;
+  line-height: 1.5;
+  color: #555;
+  font-size: 0.9rem;
 }
 
-.link-text-btn:hover {
-  color: #1d6fa5;
+.delete-modal .modal-actions {
+  gap: 0.5rem;
+  justify-content: center;
 }
 
 @media (max-width: 768px) {
