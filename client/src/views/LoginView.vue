@@ -23,6 +23,8 @@ const phoneNumber = ref('')
 const password = ref('')
 const loading = ref(false)
 const message = ref('')
+// social 認証専用の状態 (google | line) を保持します。
+const socialAuth = ref<string | null>(null)
 const liffLoading = ref(true)
 const isLineApp = ref(false)
 
@@ -92,12 +94,15 @@ onMounted(async () => {
 
 // 🟢 LINEログイン (LIFF)
 const loginWithLine = async () => {
+  // 状態をセットしてオーバーレイを出す
+  socialAuth.value = 'line'
+  message.value = 'LINEアカウントを確認中...'
   if (!liff.isLoggedIn()) {
+    // LIFF のログインは別ウィンドウへ遷移するため、ここで loading を true のままにしておく
     liff.login()
     return
   }
   loading.value = true
-  message.value = 'LINEアカウントを確認中...'
   try {
     await setPersistence(auth, browserLocalPersistence)
     const profile = await liff.getProfile()
@@ -124,11 +129,15 @@ const loginWithLine = async () => {
     console.error(error)
     message.value = `LINEログイン失敗: ${error.message}`
     loading.value = false
+    socialAuth.value = null
   }
 }
 
 // 🔵 Googleログイン
 const loginWithGoogle = async () => {
+  // social 認証フローを示す
+  socialAuth.value = 'google'
+  message.value = 'Googleで認証中...'
   loading.value = true
   try {
     await setPersistence(auth, browserLocalPersistence)
@@ -145,10 +154,13 @@ const loginWithGoogle = async () => {
         router.push('/')
       }
     }
+    // popup 成功または redirect 前に処理が抜けるため socialAuth をクリア
+    socialAuth.value = null
   } catch (error: any) {
     console.error(error)
     message.value = `Googleログイン失敗: ${error.message}`
     loading.value = false
+    socialAuth.value = null
   }
 }
 
@@ -195,6 +207,14 @@ const handleAuth = async () => {
       <button v-else class="google-btn" @click="loginWithGoogle" :disabled="loading">
         <span class="g-icon">G</span> Googleでログイン
       </button>
+    </div>
+
+    <!-- 認証中オーバーレイ（LINE / Google 用） -->
+    <div v-if="socialAuth" class="auth-overlay" aria-live="polite">
+      <div class="auth-overlay-inner">
+        <div class="spinner" aria-hidden="true"></div>
+        <div class="overlay-text">{{ socialAuth === 'line' ? 'LINEで認証中...' : 'Googleで認証中...' }}</div>
+      </div>
     </div>
 
     <div class="divider"><span>または 電話番号</span></div>
@@ -392,5 +412,47 @@ input {
 
 .toggle-mode a:hover {
   text-decoration: underline;
+}
+
+/* social auth 用オーバーレイ */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 9999;
+}
+
+.auth-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.overlay-text {
+  font-weight: bold;
+  color: #333;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 4px solid rgba(0, 0, 0, 0.12);
+  border-top-color: #42b883;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

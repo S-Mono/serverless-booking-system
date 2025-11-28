@@ -94,7 +94,9 @@ const handleLogout = async () => {
             <span class="user-welcome">ようこそ {{ customerName || 'ゲスト' }} 様</span>
 
             <button @click="handleLogout" class="logout-btn">ログアウト</button>
-            <RouterLink to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ</RouterLink>
+            <!-- 管理画面ではマイページへの遷移は不要のため非表示 -->
+            <RouterLink v-if="!isAdminPage" to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ
+            </RouterLink>
           </div>
           <RouterLink v-else to="/login" class="nav-item login-btn" @click="closeMenu">ログイン / 登録</RouterLink>
         </nav>
