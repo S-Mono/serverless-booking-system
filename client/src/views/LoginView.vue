@@ -9,10 +9,11 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  User
+  type User
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore'
 import liff from '@line/liff'
+// import { seedDatabase } from '../lib/seed' // 不要なら削除
 
 const router = useRouter()
 
@@ -27,7 +28,7 @@ const isLineApp = ref(false)
 const PSEUDO_DOMAIN = '@local.booking-system'
 const LINE_DOMAIN = '@line.booking-system'
 
-// 🟢 顧客データの自動作成 (新規登録時)
+// 🟢 顧客データの自動作成/確認
 const createCustomerData = async (user: User, provider: 'google' | 'line' | 'phone', name?: string) => {
   try {
     const docRef = doc(db, 'customers', user.uid)
@@ -36,11 +37,11 @@ const createCustomerData = async (user: User, provider: 'google' | 'line' | 'pho
     if (!docSnap.exists()) {
       // データがない = 新規ユーザーなので作成
       await setDoc(docRef, {
-        name_kana: name || user.displayName || 'ゲスト', // Google/LINEの名前を使用
-        phone_number: provider === 'phone' ? user.email?.split('@')[0] : '', // 電話ログイン以外は空
+        name_kana: name || user.displayName || 'ゲスト',
+        phone_number: provider === 'phone' ? user.email?.split('@')[0] : '',
         email: user.email || '',
-        is_existing_customer: false, // 新規扱い
-        preferred_category: 'barber', // デフォルト
+        is_existing_customer: false,
+        preferred_category: 'barber',
         provider: provider,
         created_at: Timestamp.now(),
         updated_at: Timestamp.now()
@@ -58,17 +59,21 @@ onMounted(async () => {
     isLineApp.value = true
   }
 
-  // 2. Googleリダイレクト復帰チェック
+  // 🟢 2. Googleリダイレクト復帰チェック (これが抜けていました！)
   try {
     const result = await getRedirectResult(auth)
     if (result) {
+      console.log('Google Login Success (Redirect)')
+      // 顧客データ作成 & トップへ
       await createCustomerData(result.user, 'google')
       router.push('/')
       return
     }
   } catch (error: any) {
-    if (error.code !== 'auth/popup-closed-by-user') {
+    // ユーザーキャンセル等は無視
+    if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/redirect-cancelled-by-user') {
       console.error(error)
+      message.value = `ログインエラー: ${error.message}`
     }
   }
 
@@ -88,13 +93,12 @@ onMounted(async () => {
   }
 })
 
-// 🟢 LINEアカウントでログイン (LIFF専用)
+// 🟢 LINEログイン (LIFF)
 const loginWithLine = async () => {
   if (!liff.isLoggedIn()) {
     liff.login()
     return
   }
-
   loading.value = true
   message.value = 'LINEアカウントを確認中...'
 
@@ -103,29 +107,23 @@ const loginWithLine = async () => {
     const lineUserId = profile.userId
     const lineName = profile.displayName
 
-    // 擬似アカウント情報
     const firebaseEmail = `line_${lineUserId}${LINE_DOMAIN}`
     const firebasePassword = `line_pass_${lineUserId}`
 
     let user: User
-
     try {
-      // ログイン試行
-      const userCredential = await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
-      user = userCredential.user
+      const cred = await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
+      user = cred.user
     } catch (error: any) {
-      // ユーザーがいなければ新規登録
       if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-        const userCredential = await createUserWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
-        user = userCredential.user
+        const cred = await createUserWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
+        user = cred.user
       } else {
         throw error
       }
     }
-
-    // 顧客データ確認・作成
+    // 顧客データ作成 & トップへ
     await createCustomerData(user, 'line', lineName)
-
     router.push('/')
 
   } catch (error: any) {
@@ -135,19 +133,20 @@ const loginWithLine = async () => {
   }
 }
 
-// 🔵 Googleログイン処理
+// 🔵 Googleログイン (ハイブリッド)
 const loginWithGoogle = async () => {
   loading.value = true
   message.value = ''
   try {
     const provider = new GoogleAuthProvider()
 
-    // PC(localhost)ならポップアップ、スマホならリダイレクト
+    // localhostならポップアップ、本番ならリダイレクト
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       const result = await signInWithPopup(auth, provider)
       await createCustomerData(result.user, 'google')
       router.push('/')
     } else {
+      // リダイレクト (戻ってきたら onMounted で処理される)
       await signInWithRedirect(auth, provider)
     }
   } catch (error: any) {
@@ -157,7 +156,7 @@ const loginWithGoogle = async () => {
   }
 }
 
-// 📞 電話番号認証処理
+// 📞 電話番号認証
 const handleAuth = async () => {
   loading.value = true
   message.value = ''
@@ -166,20 +165,18 @@ const handleAuth = async () => {
     let user: User
 
     if (isLoginMode.value) {
-      const userCredential = await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
-      user = userCredential.user
+      const cred = await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
+      user = cred.user
     } else {
-      const userCredential = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
-      user = userCredential.user
+      const cred = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
+      user = cred.user
     }
 
-    // 顧客データ確認・作成
     await createCustomerData(user, 'phone')
-
     router.push('/')
+
   } catch (error: any) {
     console.error(error)
-    // エラーメッセージの日本語化
     if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
     else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') message.value = '電話番号またはパスワードが違います'
     else if (error.code === 'auth/email-already-in-use') message.value = 'この電話番号は既に登録されています'
@@ -201,7 +198,6 @@ const handleAuth = async () => {
       <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">
         <span class="line-icon">L</span> LINEアカウントでログイン
       </button>
-
       <button v-else class="google-btn" @click="loginWithGoogle" :disabled="loading">
         <span class="g-icon">G</span> Googleでログイン
       </button>
@@ -235,6 +231,7 @@ const handleAuth = async () => {
 </template>
 
 <style scoped>
+/* CSSは変更なし */
 .auth-container {
   max-width: 400px;
   margin: 2rem auto;
@@ -260,7 +257,6 @@ h2 {
   margin-bottom: 1.5rem;
 }
 
-/* ボタン類のデザイン */
 .google-btn {
   width: 100%;
   background-color: #fff;
