@@ -80,7 +80,7 @@ const handleLogout = async () => {
     <header>
       <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
         <h1>
-          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 美理容予約システム</RouterLink>
+          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 サロン予約WEB</RouterLink>
         </h1>
 
         <button class="hamburger-btn" @click="toggleMenu" :class="{ active: isMenuOpen }">

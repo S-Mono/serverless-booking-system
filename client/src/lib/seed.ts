@@ -12,8 +12,8 @@ export const seedDatabase = async () =>
         await setDoc(doc(db, 'shop_config', 'default_config'), {
             time_slot_interval: 30,
             business_hours: { start: '09:00', end: '19:00' },
-            holiday_weekdays: [1, 2], // 月・火 定休 (0:日, 1:月...)
-            closed_dates: [], // 👈 追加: 臨時休業日 (例: ['2025-01-01'])
+            holiday_weekdays: [2], // 火 定休 (0:日, 1:月...)
+            closed_dates: ['2025-01-01','2025-01-02','2025-01-03','2025-12-31'], // 👈 追加: 臨時休業日 (例: ['2025-01-01'])
             max_future_booking_months: 2
         })
         console.log('✅ 店舗設定 完了')
@@ -21,26 +21,33 @@ export const seedDatabase = async () =>
         // 2. スタッフマスタ
         const staffs = [
             {
-                id: 'father',
-                name: '父',
-                display_name: 'オーナー',
+                id: 'ft',
+                name: '賢治（理容専門）',
+                display_name: 'オーナー・店長',
                 roles: { accepts_new_customer: false, accepts_free_booking: true },
-                order_priority: 1
+                order_priority: 3
             },
             {
-                id: 'brother',
-                name: '弟',
-                display_name: '店長',
-                roles: { accepts_new_customer: true, accepts_free_booking: true },
+                id: 'mt',
+                name: 'ユミコ（美容専門）',
+                display_name: 'スタッフ',
+                roles: { accepts_new_customer: true, accepts_free_booking: false },
                 order_priority: 2
             },
             {
-                id: 'mother',
-                name: '母',
+                id: 'bt',
+                name: 'ヒロユキ（理美容兼任）',
                 display_name: 'スタッフ',
-                roles: { accepts_new_customer: true, accepts_free_booking: false },
-                order_priority: 3
-            }
+                roles: { accepts_new_customer: true, accepts_free_booking: true },
+                order_priority: 1
+            },
+            {
+                id: 'st',
+                name: 'カオリ（カイロ専門）',
+                display_name: 'スタッフ',
+                roles: { accepts_new_customer: true, accepts_free_booking: true },
+                order_priority: 4
+            },
         ]
         for (const staff of staffs)
         {
@@ -49,27 +56,43 @@ export const seedDatabase = async () =>
         console.log('✅ スタッフデータ 完了')
 
         // 3. メニューマスタ
+        // テンプレート
+        //     {
+        //         id: '',                              //メニューID 自動生成推奨
+        //         title: '',                           //メニュー名
+        //         category:'',                         //カテゴリー  'barber' | 'beauty' | 'chiro' 
+        //         price: ,                             //料金
+        //         duration_min: ,                      //所要時間（分）
+        //         available_staff_ids: ['bt', 'mt'],   //対応スタッフID配列 ft（父） | bt（兄） | mt（母） | st（義姉）
+        //         discription:''                       //メニュー説明
+        //     },
         const menus = [
             {
-                id: 'cut_standard',
+                id: '',
                 title: 'メンズカット（顔剃り込）',
+                category:'',
                 price: 4500,
                 duration_min: 60,
-                available_staff_ids: ['father', 'brother', 'mother']
+                available_staff_ids: ['ft', 'bt', 'mt'],
+                discription:''
             },
             {
-                id: 'cut_color',
+                id: '',
                 title: 'カット＆カラー',
-                price: 8500,
-                duration_min: 120,
-                available_staff_ids: ['brother', 'mother']
+                category:'',
+                price: 4500,
+                duration_min: 60,
+                available_staff_ids: ['bt', 'mt'],
+                discription:''
             },
             {
-                id: 'shaving_only',
+                id: '',
                 title: '顔剃り単品',
-                price: 2000,
-                duration_min: 30,
-                available_staff_ids: ['father', 'brother', 'mother']
+                category:'',
+                price: 4500,
+                duration_min: 60,
+                available_staff_ids: ['ft', 'bt', 'mt'],
+                discription:''
             }
         ]
         for (const menu of menus)
