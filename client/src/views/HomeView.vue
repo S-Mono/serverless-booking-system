@@ -5,44 +5,53 @@ import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, query, where, Timestamp, orderBy, getDoc, doc } from 'firebase/firestore'
 import { onAuthStateChanged } from 'firebase/auth'
 import { useDialogStore } from '../stores/dialog'
-const dialog = useDialogStore() // 👈 ストア利用
+
+const dialog = useDialogStore()
+const router = useRouter()
 
 interface Menu { id: string; title: string; price: number; duration_min: number; available_staff_ids: string[]; description?: string; category?: string; }
 interface Staff { id: string; name: string; display_name: string; roles: { accepts_new_customer: boolean; accepts_free_booking: boolean }; is_working: boolean; }
-interface CustomerProfile { id: string; name_kana: string; is_existing_customer: boolean; }
-interface ShopConfig { business_hours: { start: string; end: string }; time_slot_interval: number; }
+interface CustomerProfile { id: string; name_kana: string; is_existing_customer: boolean; preferred_category?: string; } // 👈 preferred_category追加
+interface ShopConfig { business_hours: { start: string; end: string }; time_slot_interval: number; tax_rate: number; }
 
-const router = useRouter()
 const menus = ref<Menu[]>([])
 const staffs = ref<Staff[]>([])
-const shopConfig = ref<ShopConfig>({ business_hours: { start: '09:00', end: '19:00' }, time_slot_interval: 30 })
+const shopConfig = ref<ShopConfig>({ business_hours: { start: '09:00', end: '19:00' }, time_slot_interval: 30, tax_rate: 10 })
 const loading = ref(true)
 const processing = ref(false)
-const errorMessage = ref('')
 const currentUser = ref<any>(null)
+
 const customerProfile = ref<CustomerProfile | null>(null)
 const isNewUser = ref(false)
+
 const showModal = ref(false)
 const selectedMenus = ref<Menu[]>([])
 const reservationDate = ref('')
 const selectedStaffId = ref<string>('')
 const customerNote = ref('')
 const availableSlots = ref<Date[]>([])
-const activeTab = ref<'hair' | 'chiro'>('hair')
 
-const minDateTime = computed(() =>
-{
+// 🟢 タブ管理 (3つに分割)
+const activeTab = ref<'barber' | 'beauty' | 'chiro'>('barber')
+
+const minDateTime = computed(() => {
   const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); return now.toISOString().slice(0, 16)
 })
-const displayedMenus = computed(() =>
-{
-  if (activeTab.value === 'hair') return menus.value.filter(m => !m.category || m.category === 'barber' || m.category === 'beauty')
-  else return menus.value.filter(m => m.category === 'chiro')
+
+// --- 表示メニューの切り替え ---
+const displayedMenus = computed(() => {
+  return menus.value.filter(m => {
+    // 互換性: category未設定はbarber扱い
+    const cat = m.category || 'barber'
+    return cat === activeTab.value
+  })
 })
-const totalAmount = computed(() => selectedMenus.value.reduce((sum, m) => sum + m.price, 0))
+
+const getTaxPrice = (price: number) => Math.ceil(price * (1 + shopConfig.value.tax_rate / 100))
+const totalAmount = computed(() => selectedMenus.value.reduce((sum, m) => sum + getTaxPrice(m.price), 0))
 const totalDuration = computed(() => selectedMenus.value.reduce((sum, m) => sum + m.duration_min, 0))
-const availableStaffs = computed(() =>
-{
+
+const availableStaffs = computed(() => {
   if (selectedMenus.value.length === 0) return []
   const staffIdsPerMenu = selectedMenus.value.map(m => m.available_staff_ids)
   const commonStaffIds = staffIdsPerMenu.reduce((a, b) => a.filter(c => b.includes(c)))
@@ -52,75 +61,99 @@ const availableStaffs = computed(() =>
   return candidates
 })
 
-const checkCustomerStatus = async (user: any) =>
-{
-  if (!user || !user.email) return
-  const phoneNumber = user.email?.split('@')[0]
+const checkCustomerStatus = async (user: any) => {
+  // 1. UIDで直接検索 (LoginViewで作成したデータ)
+  try {
+    const docRef = doc(db, 'customers', user.uid)
+    const docSnap = await getDoc(docRef)
+
+    if (docSnap.exists()) {
+      const data = docSnap.data()
+      customerProfile.value = {
+        id: docSnap.id,
+        name_kana: data.name_kana,
+        is_existing_customer: data.is_existing_customer,
+        preferred_category: data.preferred_category
+      }
+      isNewUser.value = !data.is_existing_customer
+
+      // 🟢 初期タブの設定
+      if (data.preferred_category && ['barber', 'beauty', 'chiro'].includes(data.preferred_category)) {
+        activeTab.value = data.preferred_category as any
+      }
+      return
+    }
+  } catch (e) { console.error(e) }
+
+  // 2. UIDで見つからない場合、電話番号で名寄せ (レガシーデータ)
+  if (!user.email) return
+  const phoneNumber = user.email.split('@')[0]
   if (!phoneNumber) return
-  try
-  {
+  try {
     const q = query(collection(db, 'customers'), where('phone_number', '==', phoneNumber))
     const snapshot = await getDocs(q)
-    if (!snapshot.empty)
-    {
-      const data = snapshot.docs[0]!.data()
-      customerProfile.value = { id: snapshot.docs[0]!.id, name_kana: data.name_kana, is_existing_customer: data.is_existing_customer }
+    if (!snapshot.empty) {
+      const data = snapshot.docs[0].data()
+      customerProfile.value = {
+        id: snapshot.docs[0].id,
+        name_kana: data.name_kana,
+        is_existing_customer: data.is_existing_customer,
+        preferred_category: data.preferred_category
+      }
       isNewUser.value = !data.is_existing_customer
-    } else
-    {
-      isNewUser.value = true; customerProfile.value = null
+      // 初期タブ設定
+      if (data.preferred_category) activeTab.value = data.preferred_category as any
+    } else {
+      isNewUser.value = true
+      customerProfile.value = null
     }
   } catch (error) { console.error('名寄せエラー:', error) }
 }
 
-onMounted(async () =>
-{
-  onAuthStateChanged(auth, async (user) =>
-  {
+onMounted(async () => {
+  onAuthStateChanged(auth, async (user) => {
     currentUser.value = user
-    if (user)
-    {
+    if (user) {
       await checkCustomerStatus(user)
-      try
-      {
+      try {
         const menuSnap = await getDocs(collection(db, 'menus'))
         menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Menu[]
         const staffSnap = await getDocs(collection(db, 'staffs'))
         staffs.value = staffSnap.docs.map(doc => { const d = doc.data(); return { id: doc.id, ...d, is_working: d.is_working ?? true } }) as Staff[]
         const configSnap = await getDoc(doc(db, 'shop_config', 'default_config'))
-        if (configSnap.exists())
-        {
+        if (configSnap.exists()) {
           const data = configSnap.data()
-          shopConfig.value = { business_hours: data.business_hours || { start: '09:00', end: '19:00' }, time_slot_interval: data.time_slot_interval || 30 }
+          shopConfig.value = {
+            business_hours: data.business_hours || { start: '09:00', end: '19:00' },
+            time_slot_interval: data.time_slot_interval || 30,
+            tax_rate: data.tax_rate ?? 10
+          }
         }
-      } catch (error) { errorMessage.value = 'データの読み込みに失敗しました' } finally { loading.value = false }
+      } catch (error) { dialog.alert('データの読み込みに失敗しました', 'エラー') } finally { loading.value = false }
     } else { loading.value = false }
   })
 })
 
-const fetchAvailableSlots = async () =>
-{
+const fetchAvailableSlots = async () => {
   availableSlots.value = []
   if (!selectedStaffId.value || !reservationDate.value || selectedMenus.value.length === 0) return
-  try
-  {
+  try {
     const targetDate = new Date(reservationDate.value)
     const startOfDay = new Date(targetDate); startOfDay.setHours(0, 0, 0, 0)
     const endOfDay = new Date(targetDate); endOfDay.setDate(endOfDay.getDate() + 1); endOfDay.setHours(0, 0, 0, 0)
     const q = query(collection(db, 'reservations'), where('staff_id', '==', selectedStaffId.value), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
     const snapshot = await getDocs(q)
     const busySlots = snapshot.docs.map(doc => doc.data()).filter(d => d.status !== 'cancelled').map(d => ({ start: d.start_at.toDate().getTime(), end: d.end_at.toDate().getTime() }))
-    const openTime = parseInt(shopConfig.value.business_hours.start.split(':')[0]!, 10)
-    const closeTime = parseInt(shopConfig.value.business_hours.end.split(':')[0]!, 10)
+
+    const openTime = parseInt(shopConfig.value.business_hours.start.split(':')[0], 10)
+    const closeTime = parseInt(shopConfig.value.business_hours.end.split(':')[0], 10)
     const interval = shopConfig.value.time_slot_interval || 30
     const requiredDuration = totalDuration.value
     let current = new Date(targetDate); current.setHours(openTime, 0, 0, 0)
     const closeDate = new Date(targetDate); closeDate.setHours(closeTime, 0, 0, 0)
     const slots: Date[] = []
     const now = new Date().getTime()
-
-    while (current.getTime() + (requiredDuration * 60000) <= closeDate.getTime())
-    {
+    while (current.getTime() + (requiredDuration * 60000) <= closeDate.getTime()) {
       const slotStart = current.getTime(); const slotEnd = slotStart + (requiredDuration * 60000)
       const isOverlap = busySlots.some(busy => slotStart < busy.end && slotEnd > busy.start)
       const isPast = slotStart < now
@@ -131,22 +164,20 @@ const fetchAvailableSlots = async () =>
   } catch (e) { console.error('空き状況計算エラー:', e) }
 }
 watch([reservationDate, selectedStaffId, selectedMenus], () => { fetchAvailableSlots() })
-const openBookingModal = () =>
-{
+
+const openBookingModal = () => {
   if (selectedMenus.value.length === 0) return dialog.alert('メニューを選択してください')
-  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0]!.id; else selectedStaffId.value = ''
+  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0].id; else selectedStaffId.value = ''
   const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
   reservationDate.value = now.toISOString().slice(0, 16)
-  customerNote.value = ''; showModal.value = true; errorMessage.value = ''; fetchAvailableSlots()
+  customerNote.value = ''; showModal.value = true; fetchAvailableSlots()
 }
-const selectTime = (time: Date) =>
-{
+const selectTime = (time: Date) => {
   const pad = (n: number) => n < 10 ? '0' + n : n
   const str = time.getFullYear() + '-' + pad(time.getMonth() + 1) + '-' + pad(time.getDate()) + 'T' + pad(time.getHours()) + ':' + pad(time.getMinutes())
   reservationDate.value = str
 }
-const toggleMenu = (menu: Menu) =>
-{
+const toggleMenu = (menu: Menu) => {
   const index = selectedMenus.value.findIndex(m => m.id === menu.id)
   if (index === -1) selectedMenus.value.push(menu)
   else selectedMenus.value.splice(index, 1)
@@ -154,79 +185,55 @@ const toggleMenu = (menu: Menu) =>
 const isSelected = (menu: Menu) => selectedMenus.value.some(m => m.id === menu.id)
 const formatTime = (date: Date) => `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
 const formatDateJP = (dateStr: string) => { if (!dateStr) return ''; const d = new Date(dateStr); return `${d.getMonth() + 1}月${d.getDate()}日` }
-const submitReservation = async () =>
-{
+
+const submitReservation = async () => {
   if (!reservationDate.value || !currentUser.value || !selectedStaffId.value) return
-  processing.value = true; errorMessage.value = ''
-  try
-  {
+  processing.value = true
+  try {
     const startDate = new Date(reservationDate.value); const now = new Date()
     if (startDate < now) throw new Error('過去の日時は選択できません。')
-
     const duration = totalDuration.value
     const endDate = new Date(startDate.getTime() + duration * 60000)
     const startTimestamp = Timestamp.fromDate(startDate); const endTimestamp = Timestamp.fromDate(endDate)
     const email = currentUser.value?.email || ''; const customerPhone = email.split('@')[0] || 'unknown'; const uid = currentUser.value?.uid || 'unknown'
     const limitQ = query(collection(db, 'reservations'), where('customer_id', '==', customerProfile.value?.id || uid), where('start_at', '>=', Timestamp.now()), where('status', '!=', 'cancelled'))
     const limitSnapshot = await getDocs(limitQ)
-
     if (limitSnapshot.size >= 3) throw new Error('予約数の上限(3件)に達しています。')
-
     const q = query(collection(db, 'reservations'), where('start_at', '<', endTimestamp), where('end_at', '>', startTimestamp))
     const snapshot = await getDocs(q)
     let isBusy = false
-
-    snapshot.forEach(doc =>
-    {
-      const data = doc.data();
-      if (data.status !== 'cancelled' && data.staff_id === selectedStaffId.value) isBusy = true
-    })
+    snapshot.forEach(doc => { const data = doc.data(); if (data.status !== 'cancelled' && data.staff_id === selectedStaffId.value) isBusy = true })
     if (isBusy) throw new Error('申し訳ありません。指定された日時は担当者が満席です。')
-
     await addDoc(collection(db, 'reservations'), {
       customer_id: customerProfile.value?.id || uid, customer_name: customerProfile.value?.name_kana || 'WEB予約ゲスト',
       customer_phone: customerPhone, staff_id: selectedStaffId.value, start_at: startTimestamp, end_at: endTimestamp,
-      menu_items: selectedMenus.value.map(m => (
-        { title: m.title, price: m.price, duration: m.duration_min }
-      )),
+      menu_items: selectedMenus.value.map(m => ({ title: m.title, price: getTaxPrice(m.price), duration: m.duration_min })),
       total_price: totalAmount.value, total_duration_min: totalDuration.value, source: 'web', status: 'pending', note: customerNote.value || '', created_at: Timestamp.now()
     })
 
-    // 🔔 LINE通知を送信 (エラーが出ても予約自体は止めないようにtry-catchする)
-    try
-    {
-      const NOTIFY_API_URL = 'https://send-line-notice-799586295685.asia-northeast1.run.app';
+    // 通知API呼び出し
+    try {
+      // const NOTIFY_API_URL = '...'; 
+      // fetch(NOTIFY_API_URL, ...);
+    } catch (e) { }
 
-      // 日付整形
-      const dateStr = `${startDate.getMonth() + 1}/${startDate.getDate()} ${startDate.getHours()}:${String(startDate.getMinutes()).padStart(2, '0')}`;
-
-      const message = `🎉 新しい予約が入りました！\n\n日時: ${dateStr}\nメニュー: ${selectedMenus.value.map(m => m.title).join(', ')}\nお名前: ${customerProfile.value?.name_kana || 'ゲスト'} 様`;
-
-      fetch(NOTIFY_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
-      }); // awaitなしで投げっぱなしにする（待つ必要がないため）
-
-    } catch (e)
-    {
-      console.error('通知送信エラー', e);
-    }
-    dialog.alert('予約リクエストを送信しました！\nお店からの確定をお待ちください。'); showModal.value = false; reservationDate.value = ''; selectedMenus.value = []
-  } catch (error: any) { console.error(error); errorMessage.value = error.message } finally { processing.value = false }
+    await dialog.alert('予約リクエストを送信しました！\nお店からの確定をお待ちください。')
+    showModal.value = false; reservationDate.value = ''; selectedMenus.value = []
+  } catch (error: any) { console.error(error); await dialog.alert(error.message, 'エラー') } finally { processing.value = false }
 }
 </script>
 
 <template>
-  <div class="home-wrapper">
+  <div class="home-container">
     <p v-if="loading" class="loading">読み込み中...</p>
 
     <div v-else-if="currentUser" class="main-content">
-
       <div class="sticky-tabs">
         <div class="tab-container">
-          <button class="tab-btn" :class="{ active: activeTab === 'hair' }" @click="activeTab = 'hair'">💇‍♀️
-            理美容</button>
+          <button class="tab-btn" :class="{ active: activeTab === 'barber' }" @click="activeTab = 'barber'">💈
+            理容</button>
+          <button class="tab-btn" :class="{ active: activeTab === 'beauty' }" @click="activeTab = 'beauty'">💇‍♀️
+            美容</button>
           <button class="tab-btn" :class="{ active: activeTab === 'chiro' }" @click="activeTab = 'chiro'">💆‍♂️
             カイロ</button>
         </div>
@@ -234,8 +241,12 @@ const submitReservation = async () =>
 
       <div class="menu-section-wrapper">
         <div class="menu-header">
-          <h2 class="section-title">{{ activeTab === 'hair' ? '理美容メニュー' : 'カイロプラクティック' }}</h2>
-          <p class="section-desc">{{ activeTab === 'hair' ? 'ご希望のカット・カラー等を選択してください' : '身体のメンテナンスメニューです' }}</p>
+          <h2 class="section-title">
+            {{ activeTab === 'barber' ? '理容メニュー' : (activeTab === 'beauty' ? '美容メニュー' : 'カイロプラクティック') }}
+          </h2>
+          <p class="section-desc">
+            {{ activeTab === 'chiro' ? '身体のメンテナンスメニューです' : 'ご希望のメニューを選択してください' }}
+          </p>
         </div>
 
         <ul class="menu-list">
@@ -245,7 +256,7 @@ const submitReservation = async () =>
             <div class="menu-info">
               <span class="menu-title">{{ menu.title }}</span>
               <div class="menu-meta"><span class="menu-duration">⏱ {{ menu.duration_min }}分</span><span
-                  class="menu-price">¥{{ menu.price.toLocaleString() }}</span></div>
+                  class="menu-price">¥{{ getTaxPrice(menu.price).toLocaleString() }}</span></div>
             </div>
           </li>
         </ul>
@@ -262,8 +273,8 @@ const submitReservation = async () =>
     <div v-else class="login-prompt">
       <div class="prompt-card">
         <h2>ようこそ！</h2>
-        <p>WEB予約を利用するにはログイン（または会員登録）が必要です。</p>
-        <button class="go-login-btn" @click="router.push('/login')">ログイン / 新規登録</button>
+        <p>WEB予約を利用するにはログイン（または会員登録）が必要です。</p><button class="go-login-btn" @click="router.push('/login')">ログイン /
+          新規登録</button>
       </div>
     </div>
 
@@ -291,7 +302,6 @@ const submitReservation = async () =>
         </div>
         <div class="form-group"><label>ご要望・メモ (任意)</label><textarea v-model="customerNote"
             placeholder="髪型の希望など"></textarea></div>
-        <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>
         <div class="modal-actions"><button class="cancel-btn" @click="showModal = false"
             :disabled="processing">キャンセル</button><button class="confirm-btn" @click="submitReservation"
             :disabled="!reservationDate || !selectedStaffId || processing">{{ processing ? '処理中...' : '確定する' }}</button>
@@ -302,67 +312,97 @@ const submitReservation = async () =>
 </template>
 
 <style scoped>
-/* 全体のラッパー */
-.home-wrapper {
-  padding-bottom: 6rem;
-  /* PCでは幅制限、スマホではフル幅 */
-  width: 100%;
+/* --- 全体レイアウト --- */
+.home-container {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding-bottom: 8rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  min-height: 100%;
 }
 
-.main-content {
-  display: flex;
-  flex-direction: column;
-}
-
-/* 🟢 タブをフロートさせる設定 */
+/* --- タブナビゲーション (フォルダ風) --- */
 .sticky-tabs {
   position: sticky;
   top: 60px;
-  /* ヘッダー(60px)の下に吸着 */
+  /* ヘッダーの下 */
   z-index: 90;
-  background-color: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(5px);
-  border-bottom: 1px solid #eee;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-  width: 100%;
+  background-color: #f4f5f7;
+  /* 背景色と合わせる */
+  padding-top: 1.5rem;
+  margin-bottom: 0;
+  /* 下のコンテンツとくっつける */
 }
 
 .tab-container {
+  display: flex;
   max-width: 1024px;
   margin: 0 auto;
-  display: flex;
+  /* 下線を引いて、アクティブなタブだけその上に乗せる */
+  border-bottom: 1px solid #ddd;
 }
 
 .tab-btn {
   flex: 1;
   padding: 1rem;
-  border: none;
-  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: #e0e0e0;
+  /* 未選択はグレー */
+  color: #666;
   font-weight: bold;
-  color: #888;
-  cursor: pointer;
-  border-bottom: 3px solid transparent;
-  transition: all 0.2s;
   font-size: 1.1rem;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+  /* 上だけ丸く */
+  transition: all 0.2s;
+  margin-right: 4px;
+  /* タブ同士の隙間 */
+}
+
+.tab-btn:last-child {
+  margin-right: 0;
 }
 
 .tab-btn:hover {
-  color: #555;
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: #d5d5d5;
+  color: #333;
 }
 
+/* アクティブなタブのデザイン */
 .tab-btn.active {
-  color: #3498db;
-  border-bottom-color: #3498db;
+  background: #fff;
+  /* 白背景 */
+  color: #333;
+  border-color: #ddd;
+  /* 枠線を表示 */
+  border-bottom: 1px solid #fff;
+  /* 下線を白にしてコンテンツと繋げる */
+  margin-bottom: -1px;
+  /* 1px下にずらして線を隠す */
+  position: relative;
+  z-index: 1;
+  /* アクセントカラーの帯 */
+  border-top: 4px solid #3498db;
 }
 
-/* メニューエリア */
+/* カイロのタブだけ色を変える場合 */
+.tab-btn.active:nth-child(2) {
+  border-top-color: #27ae60;
+}
+
+/* --- コンテンツエリア (枠で囲む) --- */
 .menu-section-wrapper {
-  max-width: 1024px;
-  margin: 0 auto;
-  padding: 2rem 1rem;
-  width: 100%;
-  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-top: none;
+  /* 上の線はタブに任せる */
+  border-radius: 0 0 8px 8px;
+  /* 下だけ丸く */
+  padding: 2rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  margin-bottom: 2rem;
 }
 
 .section-title {
@@ -370,6 +410,7 @@ const submitReservation = async () =>
   margin-bottom: 0.5rem;
   font-size: 1.5rem;
   color: #333;
+  margin-top: 1rem;
 }
 
 .section-desc {
@@ -379,12 +420,13 @@ const submitReservation = async () =>
   margin-bottom: 2rem;
 }
 
+/* --- ユーザー情報 --- */
 .user-status {
-  background: #f0f7ff;
+  background: #f8f9fa;
   padding: 1rem;
   border-radius: 6px;
   margin-bottom: 2rem;
-  border: 1px solid #cce5ff;
+  border: 1px solid #eee;
   font-size: 0.95rem;
   text-align: center;
   max-width: 600px;
@@ -393,20 +435,20 @@ const submitReservation = async () =>
 }
 
 .existing {
-  color: #004085;
+  color: #2c3e50;
 }
 
 .new {
-  color: #155724;
+  color: #27ae60;
   font-weight: bold;
 }
 
-/* メニューリスト (レスポンシブ) */
+/* --- メニューリスト (グリッド) --- */
 .menu-list {
   list-style: none;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1.5rem;
 }
 
@@ -470,9 +512,10 @@ const submitReservation = async () =>
   font-size: 1.1rem;
   border: 2px dashed #eee;
   border-radius: 8px;
+  background: #fafafa;
 }
 
-/* --- その他の要素 (前回と同じ) --- */
+/* --- その他 --- */
 .loading {
   text-align: center;
   color: #666;
@@ -512,6 +555,7 @@ const submitReservation = async () =>
   background: #3aa876;
 }
 
+/* 下部アクションバー */
 .bottom-action {
   position: fixed;
   bottom: 0;
@@ -560,7 +604,7 @@ const submitReservation = async () =>
   transform: translateY(-2px);
 }
 
-/* モーダル系 */
+/* モーダル */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -689,7 +733,7 @@ textarea {
   color: #4caf50;
   padding: 0.8rem 0.5rem;
   border-radius: 4px;
-  font-size: 1rem;
+  font-size: 0.9rem;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -716,13 +760,27 @@ textarea {
 
 /* --- 📱 スマホ対応 --- */
 @media (max-width: 768px) {
-
-  /* コンテナのパディングを戻す */
-  .menu-section-wrapper {
-    padding: 1rem;
+  .home-container {
+    padding-left: 0;
+    padding-right: 0;
   }
 
-  /* メニューを1列に戻す */
+  /* スマホではタブを少し小さく、横スクロール対応にしても良い */
+  .tab-btn {
+    font-size: 1rem;
+    padding: 0.8rem;
+    margin-right: 2px;
+    border-radius: 4px 4px 0 0;
+  }
+
+  /* コンテンツエリアの角をスマホでは直角に戻して幅いっぱいにする */
+  .menu-section-wrapper {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    padding: 1.5rem 1rem;
+  }
+
   .menu-list {
     grid-template-columns: 1fr;
     gap: 0.8rem;
@@ -732,19 +790,14 @@ textarea {
     padding: 1rem;
   }
 
-  .tab-btn {
-    font-size: 1rem;
-    padding: 0.8rem;
+  .bottom-action {
+    padding: 1rem;
+    gap: 1rem;
+    flex-direction: column;
   }
 
   .book-btn {
     width: 100%;
-  }
-
-  .bottom-action {
-    gap: 1rem;
-    flex-direction: column;
-    padding: 1rem;
   }
 
   .summary {

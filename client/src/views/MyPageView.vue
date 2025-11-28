@@ -1,98 +1,106 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router' // 👈 追加
 import { db, auth } from '../lib/firebase'
-import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy } from 'firebase/firestore'
+import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc } from 'firebase/firestore'
 import { onAuthStateChanged } from 'firebase/auth'
 import { useDialogStore } from '../stores/dialog'
-const dialog = useDialogStore() // 👈 ストア利用
 
-interface Reservation
-{
+const dialog = useDialogStore()
+
+interface Reservation {
   id: string
   start_at: Timestamp
   menu_items: { title: string; price: number }[]
-  status: string // 'confirmed' | 'pending'
+  status: string
 }
 
-const router = useRouter() // 👈 追加
 const reservations = ref<Reservation[]>([])
 const loading = ref(true)
 const currentUser = ref<any>(null)
 const nameKana = ref('')
+const preferredCategory = ref('barber') // 👈 追加
 const isSavingProfile = ref(false)
 
-const fetchReservations = async (userId: string) =>
-{
+const fetchReservations = async (userId: string) => {
   loading.value = true
-  try
-  {
+  try {
     const q = query(collection(db, 'reservations'), where('customer_id', '==', userId))
     const querySnapshot = await getDocs(q)
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
-
     reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
 
-    const phone = currentUser.value.email?.split('@')[0]
-    if (phone)
-    {
-      const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
-      const custSnap = await getDocs(custQ)
-      if (!custSnap.empty) nameKana.value = custSnap.docs[0]!.data().name_kana
+    // プロフィール取得 (UID優先)
+    const docRef = doc(db, 'customers', userId)
+    const docSnap = await getDoc(docRef)
+
+    if (docSnap.exists()) {
+      const data = docSnap.data()
+      nameKana.value = data.name_kana
+      preferredCategory.value = data.preferred_category || 'barber'
+    } else {
+      // なければ電話番号で名寄せトライ
+      const phone = currentUser.value.email?.split('@')[0]
+      if (phone) {
+        const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
+        const custSnap = await getDocs(custQ)
+        if (!custSnap.empty) {
+          const data = custSnap.docs[0].data()
+          nameKana.value = data.name_kana
+          preferredCategory.value = data.preferred_category || 'barber'
+        }
+      }
     }
-  } catch (error)
-  {
+  } catch (error) {
     console.error('Error fetching reservations:', error)
-  } finally
-  {
+  } finally {
     loading.value = false
   }
 }
 
-const saveProfile = async () =>
-{
-  if (!currentUser.value || !nameKana.value) return
+const saveProfile = async () => {
+  if (!currentUser.value) return
   isSavingProfile.value = true
-  try
-  {
+  try {
     const phone = currentUser.value.email?.split('@')[0] || ''
     await setDoc(doc(db, 'customers', currentUser.value.uid), {
-      name_kana: nameKana.value, phone_number: phone, is_existing_customer: true, updated_at: Timestamp.now()
+      name_kana: nameKana.value,
+      phone_number: phone,
+      preferred_category: preferredCategory.value, // 👈 保存
+      is_existing_customer: true,
+      updated_at: Timestamp.now()
     }, { merge: true })
     dialog.alert('プロフィールを保存しました')
-  } catch (error) { console.error(error); dialog.alert('保存失敗') } finally { isSavingProfile.value = false }
+  } catch (error) { console.error(error); dialog.alert('保存失敗', 'エラー') } finally { isSavingProfile.value = false }
 }
 
-const cancelReservation = async (id: string) =>
-{
-  const dlg = await dialog.confirm('キャンセルしますか？');
-  if (!dlg) return
-  try
-  {
+const cancelReservation = async (id: string) => {
+  const ok = await dialog.confirm('キャンセルしますか？')
+  if (!ok) return
+  try {
     await deleteDoc(doc(db, 'reservations', id))
     dialog.alert('予約をキャンセルしました')
     reservations.value = reservations.value.filter(res => res.id !== id)
-  } catch (error) { console.error(error); dialog.alert('キャンセル失敗') }
+  } catch (error) { console.error(error); dialog.alert('キャンセル失敗', 'エラー') }
 }
 
-// 👇 追加: 戻る処理
-const goBack = () =>
-{
-  router.push('/')
+// 戻る
+const goBack = () => {
+  // ルーターを使ってもいいが、import省略のためhistory.back()でも可
+  // 今回はrouterを使う
+  import('vue-router').then(({ useRouter }) => {
+    useRouter().push('/')
+  })
 }
 
-onMounted(() =>
-{
-  onAuthStateChanged(auth, (user) =>
-  {
+onMounted(() => {
+  onAuthStateChanged(auth, (user) => {
     currentUser.value = user
     if (user) fetchReservations(user.uid)
     else loading.value = false
   })
 })
 
-const formatDate = (ts: Timestamp) =>
-{
+const formatDate = (ts: Timestamp) => {
   const d = ts.toDate()
   return d.toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' })
 }
@@ -100,9 +108,8 @@ const formatDate = (ts: Timestamp) =>
 
 <template>
   <div class="mypage-container">
-
     <div class="page-header">
-      <button @click="goBack" class="back-btn">◀ 予約画面に戻る</button>
+      <router-link to="/" class="back-btn">◀ 予約画面に戻る</router-link>
       <h2 class="page-title">マイページ</h2>
     </div>
 
@@ -115,26 +122,36 @@ const formatDate = (ts: Timestamp) =>
             <div class="input-row">
               <input type="text" v-model="nameKana" placeholder="例: ヤマダ タロウ" />
             </div>
-            <p class="hint">※ 予約時に自動入力されます。</p>
-            <button @click="saveProfile" :disabled="isSavingProfile" class="save-btn">
-              {{ isSavingProfile ? '保存中...' : '保存する' }}
-            </button>
           </div>
+
+          <div class="form-group">
+            <label>よく利用するメニュー</label>
+            <div class="radio-group">
+              <label class="radio-item">
+                <input type="radio" value="barber" v-model="preferredCategory"> 💈 理容
+              </label>
+              <label class="radio-item">
+                <input type="radio" value="beauty" v-model="preferredCategory"> 💇‍♀️ 美容
+              </label>
+            </div>
+            <p class="hint">※ 予約画面の初期表示に反映されます。</p>
+          </div>
+
+          <button @click="saveProfile" :disabled="isSavingProfile" class="save-btn">
+            {{ isSavingProfile ? '保存中...' : '保存する' }}
+          </button>
         </div>
       </aside>
 
       <main class="reservation-column">
         <div class="card reservation-container">
           <h3>予約状況</h3>
-
           <p v-if="loading" class="loading">読み込み中...</p>
-
           <div v-else>
             <div v-if="reservations.length === 0" class="no-data">
-              <p>現在の予約はありません。</p>
+              <p>現在、予約はありません。</p>
               <router-link to="/" class="book-link">予約を入れる</router-link>
             </div>
-
             <ul v-else class="reservation-list">
               <li v-for="res in reservations" :key="res.id" class="reservation-item">
                 <div class="res-header">
@@ -167,7 +184,6 @@ const formatDate = (ts: Timestamp) =>
   padding: 2rem 1rem;
 }
 
-/* 👇 ヘッダー周りのスタイル調整 */
 .page-header {
   display: flex;
   align-items: center;
@@ -181,10 +197,7 @@ const formatDate = (ts: Timestamp) =>
   font-size: 1.5rem;
   color: #333;
   margin: 0;
-  /* マージンリセット */
   border-bottom: none;
-  /* ボーダーは親に任せる */
-  padding-bottom: 0;
 }
 
 .back-btn {
@@ -195,7 +208,8 @@ const formatDate = (ts: Timestamp) =>
   border-radius: 20px;
   cursor: pointer;
   font-size: 0.9rem;
-  transition: all 0.2s;
+  text-decoration: none;
+  display: inline-block;
 }
 
 .back-btn:hover {
@@ -203,7 +217,6 @@ const formatDate = (ts: Timestamp) =>
   color: #333;
 }
 
-/* ... (以下、既存のスタイルはそのまま) ... */
 .content-grid {
   display: grid;
   grid-template-columns: 300px 1fr;
@@ -228,6 +241,10 @@ const formatDate = (ts: Timestamp) =>
   padding-bottom: 0.5rem;
 }
 
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
 .form-group label {
   display: block;
   font-weight: bold;
@@ -244,10 +261,22 @@ const formatDate = (ts: Timestamp) =>
   box-sizing: border-box;
 }
 
+.radio-group {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.radio-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
 .hint {
   font-size: 0.8rem;
   color: #666;
-  margin: 0.5rem 0 1rem 0;
+  margin: 0.5rem 0 0 0;
 }
 
 .save-btn {
@@ -282,10 +311,6 @@ const formatDate = (ts: Timestamp) =>
   color: #3498db;
   font-weight: bold;
   text-decoration: none;
-}
-
-.book-link:hover {
-  text-decoration: underline;
 }
 
 .reservation-list {

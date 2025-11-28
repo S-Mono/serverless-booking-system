@@ -2,93 +2,116 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { db } from '../lib/firebase'
-import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc } from 'firebase/firestore'
+import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { useDialogStore } from '../stores/dialog'
-const dialog = useDialogStore() // 👈 ストア利用
+
+const dialog = useDialogStore()
+const router = useRouter()
 
 interface Staff { id: string; name: string }
-interface Menu
-{
+interface Menu {
   id: string
   title: string
-  price: number
+  price: number // 税抜
   duration_min: number
   available_staff_ids: string[]
   description?: string
-  category: 'barber' | 'beauty' | 'chiro' // 👈 カテゴリ追加
+  category: 'barber' | 'beauty' | 'chiro'
 }
 
-const router = useRouter()
 const menus = ref<Menu[]>([])
 const staffs = ref<Staff[]>([])
 const loading = ref(true)
+const taxRate = ref(10)
 
 const showModal = ref(false)
 const isEditing = ref(false)
 const editTargetId = ref<string | null>(null)
-const editForm = ref<Menu>({
+
+// 編集フォーム (税込価格も持たせる)
+const editForm = ref({
   id: '',
   title: '',
-  price: 0,
+  price: 0,       // 税抜
+  priceWithTax: 0, // 税込 (入力用)
   duration_min: 30,
-  available_staff_ids: [],
+  available_staff_ids: [] as string[],
   description: '',
-  category: 'barber' // デフォルト
+  category: 'barber' as 'barber' | 'beauty' | 'chiro'
 })
 
-// カテゴリ定義
 const categories = [
   { id: 'barber', label: '💈 理容' },
   { id: 'beauty', label: '💇‍♀️ 美容' },
   { id: 'chiro', label: '💆‍♂️ カイロプラクティック' }
 ]
 
-// カテゴリごとにメニューをフィルタリング
-const menusByCategory = computed(() =>
-{
+const menusByCategory = computed(() => {
   return {
-    barber: menus.value.filter(m => m.category === 'barber' || !m.category), // 互換性のため未設定はbarberへ
+    barber: menus.value.filter(m => m.category === 'barber' || !m.category),
     beauty: menus.value.filter(m => m.category === 'beauty'),
     chiro: menus.value.filter(m => m.category === 'chiro')
   }
 })
 
-const fetchData = async () =>
-{
+// 💰 計算ロジック
+// 税抜 -> 税込
+const calcTaxIncluded = (price: number) => Math.ceil(price * (1 + taxRate.value / 100))
+// 税込 -> 税抜
+const calcTaxExcluded = (priceWithTax: number) => Math.ceil(priceWithTax / (1 + taxRate.value / 100))
+
+// 入力ハンドラ
+const updateInclusive = () => {
+  // 税抜が入力されたら税込を計算
+  editForm.value.priceWithTax = calcTaxIncluded(editForm.value.price)
+}
+const updateExclusive = () => {
+  // 税込が入力されたら税抜を計算
+  editForm.value.price = calcTaxExcluded(editForm.value.priceWithTax)
+}
+
+const fetchData = async () => {
   loading.value = true
-  try
-  {
-    const [menuSnap, staffSnap] = await Promise.all([
+  try {
+    const [menuSnap, staffSnap, configSnap] = await Promise.all([
       getDocs(collection(db, 'menus')),
-      getDocs(collection(db, 'staffs'))
+      getDocs(collection(db, 'staffs')),
+      getDoc(doc(db, 'shop_config', 'default_config'))
     ])
+
     menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Menu[]
     staffs.value = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Staff[]
-  } catch (e)
-  {
+
+    if (configSnap.exists()) {
+      const data = configSnap.data()
+      taxRate.value = data.tax_rate ?? 10
+    }
+  } catch (e) {
     console.error(e);
-    dialog.alert('読み込みエラー');
-  } finally
-  {
+    dialog.alert('読み込みエラー')
+  } finally {
     loading.value = false
   }
 }
 
-const openEditModal = (menu?: Menu) =>
-{
-  if (menu)
-  {
+const openEditModal = (menu?: Menu) => {
+  if (menu) {
     isEditing.value = true
     editTargetId.value = menu.id
-    editForm.value = JSON.parse(JSON.stringify(menu))
-    // 古いデータにcategoryがない場合のフォールバック
+    // 既存データをコピーし、税込価格を計算してセット
+    editForm.value = {
+      ...JSON.parse(JSON.stringify(menu)),
+      priceWithTax: calcTaxIncluded(menu.price)
+    }
     if (!editForm.value.category) editForm.value.category = 'barber'
-  } else
-  {
+  } else {
     isEditing.value = false
     editTargetId.value = null
+    // 新規
     editForm.value = {
-      id: '', title: '', price: 4000, duration_min: 60,
+      id: '', title: '',
+      price: 4000, priceWithTax: calcTaxIncluded(4000),
+      duration_min: 60,
       available_staff_ids: staffs.value.map(s => s.id),
       description: '',
       category: 'barber'
@@ -97,37 +120,33 @@ const openEditModal = (menu?: Menu) =>
   showModal.value = true
 }
 
-const saveMenu = async () =>
-{
-  if (!editForm.value.title) return dialog.alert('メニュー名を入力してください');
-  try
-  {
+const saveMenu = async () => {
+  if (!editForm.value.title) return dialog.alert('メニュー名を入力してください')
+  try {
     const payload = {
       title: editForm.value.title,
-      price: editForm.value.price,
+      price: editForm.value.price, // 保存するのは税抜のみ
       duration_min: editForm.value.duration_min,
       available_staff_ids: editForm.value.available_staff_ids,
       description: editForm.value.description || '',
       category: editForm.value.category
     }
-    if (isEditing.value && editTargetId.value)
-    {
+
+    if (isEditing.value && editTargetId.value) {
       await updateDoc(doc(db, 'menus', editTargetId.value), payload)
-    } else
-    {
+    } else {
       await addDoc(collection(db, 'menus'), payload)
     }
-    dialog.alert('保存しました');
+
+    dialog.alert('保存しました')
     showModal.value = false
     fetchData()
   } catch (e) { console.error(e); dialog.alert('保存失敗') }
 }
 
-const deleteMenu = async (id: string) =>
-{
-  const dlg = await dialog.confirm('本当に削除しますか？', '削除確認', 'danger')
-  if (!dlg) return
-
+const deleteMenu = async (id: string) => {
+  const ok = await dialog.confirm('本当に削除しますか？', '削除確認', 'danger')
+  if (!ok) return
   try { await deleteDoc(doc(db, 'menus', id)); fetchData() } catch (e) { dialog.alert('削除失敗') }
 }
 
@@ -147,6 +166,7 @@ onMounted(() => { fetchData() })
     <main class="settings-body">
       <div class="content-wrapper">
         <div class="top-actions">
+          <span class="tax-info">消費税率: <strong>{{ taxRate }}%</strong></span>
           <button @click="openEditModal()" class="add-btn">＋ 新規メニュー追加</button>
         </div>
 
@@ -171,7 +191,13 @@ onMounted(() => { fetchData() })
                   </div>
                 </div>
                 <div class="card-details">
-                  <div class="detail-row"><span class="label">価格:</span> ¥{{ menu.price.toLocaleString() }}</div>
+                  <div class="detail-row">
+                    <span class="label">価格:</span>
+                    <span>
+                      ¥{{ menu.price.toLocaleString() }}
+                      <small class="tax-text">(税込 ¥{{ calcTaxIncluded(menu.price).toLocaleString() }})</small>
+                    </span>
+                  </div>
                   <div class="detail-row"><span class="label">時間:</span> {{ menu.duration_min }}分</div>
                   <div class="detail-row">
                     <span class="label">担当:</span>
@@ -205,10 +231,20 @@ onMounted(() => { fetchData() })
 
         <div class="form-group"><label>メニュー名</label><input type="text" v-model="editForm.title"
             placeholder="例: カット＆カラー" /></div>
+
         <div class="form-row">
-          <div class="form-group"><label>価格 (円)</label><input type="number" v-model="editForm.price" /></div>
-          <div class="form-group"><label>所要時間 (分)</label><input type="number" v-model="editForm.duration_min" /></div>
+          <div class="form-group">
+            <label>税抜価格 (円)</label>
+            <input type="number" v-model="editForm.price" @input="updateInclusive" />
+          </div>
+          <div class="form-group">
+            <label>税込価格 (円)</label>
+            <input type="number" v-model="editForm.priceWithTax" @input="updateExclusive" />
+          </div>
         </div>
+
+        <div class="form-group"><label>所要時間 (分)</label><input type="number" v-model="editForm.duration_min" /></div>
+
         <div class="form-group"><label>担当可能スタッフ</label>
           <div class="checkbox-group">
             <label v-for="staff in staffs" :key="staff.id" class="checkbox-item">
@@ -217,15 +253,18 @@ onMounted(() => { fetchData() })
           </div>
         </div>
         <div class="form-group"><label>説明 (任意)</label><textarea v-model="editForm.description"></textarea></div>
-        <div class="modal-actions"><button @click="showModal = false" class="cancel-btn">キャンセル</button><button
-            @click="saveMenu" class="save-btn">保存</button></div>
+
+        <div class="modal-actions">
+          <button @click="showModal = false" class="cancel-btn">キャンセル</button>
+          <button @click="saveMenu" class="save-btn">保存</button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 既存CSSをベースに調整 */
+/* 既存CSS */
 .settings-container {
   min-height: 100vh;
   background-color: #f4f5f7;
@@ -276,6 +315,15 @@ onMounted(() => { fetchData() })
 .top-actions {
   text-align: right;
   margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 1rem;
+}
+
+.tax-info {
+  color: #666;
+  font-size: 0.9rem;
 }
 
 .add-btn {
@@ -323,22 +371,17 @@ onMounted(() => { fetchData() })
   border-top: 3px solid #ddd;
 }
 
-/* カテゴリごとの色分け */
 .category-section:nth-child(1) .menu-card {
   border-top-color: #3498db;
 }
 
-/* 理容 */
 .category-section:nth-child(2) .menu-card {
   border-top-color: #e91e63;
 }
 
-/* 美容 */
 .category-section:nth-child(3) .menu-card {
   border-top-color: #27ae60;
 }
-
-/* カイロ */
 
 .card-header {
   display: flex;
@@ -374,6 +417,13 @@ onMounted(() => { fetchData() })
   color: #666;
   width: 50px;
   flex-shrink: 0;
+}
+
+.tax-text {
+  color: #e74c3c;
+  font-weight: bold;
+  margin-left: 0.5rem;
+  font-size: 0.85rem;
 }
 
 .staff-tags {
@@ -417,6 +467,33 @@ onMounted(() => { fetchData() })
   max-width: 500px;
   max-height: 90vh;
   overflow-y: auto;
+  position: relative;
+}
+
+.modal-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.modal-header-row h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.close-x-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  color: #999;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.close-x-btn:hover {
+  color: #333;
 }
 
 .form-group {

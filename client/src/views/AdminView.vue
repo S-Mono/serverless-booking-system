@@ -2,25 +2,24 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
-import { useDialogStore } from '../stores/dialog'
-import { useRouter } from 'vue-router' //
+import { useRouter } from 'vue-router'
+import { useDialogStore } from '../stores/dialog' // 👈 共通ダイアログ
 
-const dialog = useDialogStore() // 👈 ストア利用
 const router = useRouter()
+const dialog = useDialogStore() // 👈 ストア利用
 
 interface Staff { id: string; name: string }
-interface Reservation
-{
+interface Reservation {
   id: string; start_at: Timestamp; end_at: Timestamp; staff_id: string
   customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number }[]; status: string; source?: 'web' | 'phone'; note?: string
 }
 interface Menu { id: string; title: string; duration_min: number }
-interface ShopConfig { holiday_weekdays: number[]; closed_dates: string[]; business_hours: { start: string; end: string } }
+interface ShopConfig { holiday_weekdays: number[]; closed_dates: string[]; business_hours: { start: string; end: string }; tax_rate: number }
 
 const staffs = ref<Staff[]>([])
 const reservations = ref<Reservation[]>([])
 const menus = ref<Menu[]>([])
-const shopConfig = ref<ShopConfig>({ holiday_weekdays: [], closed_dates: [], business_hours: { start: '09:00', end: '19:00' } })
+const shopConfig = ref<ShopConfig>({ holiday_weekdays: [], closed_dates: [], business_hours: { start: '09:00', end: '19:00' }, tax_rate: 10 })
 const loading = ref(true)
 
 const isSidebarOpen = ref(true)
@@ -36,12 +35,12 @@ const dragStartTime = ref<Date | null>(null)
 const dragEndTime = ref<Date | null>(null)
 const dragStartX = ref(0)
 
-const showModal = ref(false)
-const showDetailModal = ref(false)
-const showDeleteModal = ref(false)
+// --- モーダル管理 ---
+const showModal = ref(false)       // 新規・編集用
+const showDetailModal = ref(false) // 詳細用
+// 🗑️ showDeleteModal は廃止（共通ダイアログを使用）
 
 const selectedReservation = ref<Reservation | null>(null)
-const deleteTargetId = ref<string | null>(null)
 
 const isEditing = ref(false)
 const editingId = ref<string | null>(null)
@@ -50,15 +49,13 @@ const newReservation = ref({
   staff_id: '', start_time: '', customer_name: '', customer_phone: '', menu_id: '', note: ''
 })
 
-const timeLabels = computed(() =>
-{
+const timeLabels = computed(() => {
   const labels = []
   for (let i = openHour.value; i < closeHour.value; i++) labels.push(`${i}:00`)
   return labels
 })
 
-const changeDate = (diff: number) =>
-{
+const changeDate = (diff: number) => {
   const d = new Date(selectedDate.value)
   d.setDate(d.getDate() + diff)
   selectedDate.value = d
@@ -66,46 +63,43 @@ const changeDate = (diff: number) =>
 
 watch(selectedDate, () => { initData(false) })
 
-// AdminView.vue の initData 関数
+const getTaxPrice = (price: number) => Math.ceil(price * (1 + shopConfig.value.tax_rate / 100))
 
-const initData = async (fetchMaster = true) =>
-{
-  // 👇 追加: 一般ユーザー(電話ログイン)なら弾く
-  if (auth.currentUser?.phoneNumber)
-  {
-    alert('権限がありません')
+const initData = async (fetchMaster = true) => {
+  // 権限チェック
+  if (auth.currentUser?.phoneNumber) {
+    dialog.alert('権限がありません')
     router.push('/')
     return
   }
 
   loading.value = true
 
-  // 🔔 1. 通知の許可をリクエスト
-  if (Notification.permission === 'default')
-  {
-    await Notification.requestPermission()
+  // 通知許可リクエスト
+  if (Notification.permission === 'default') {
+    Notification.requestPermission()
   }
 
-  try
-  {
-    if (fetchMaster)
-    {
+  try {
+    if (fetchMaster) {
       const staffSnap = await getDocs(collection(db, 'staffs'))
-      staffs.value = staffSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter((s: any) => s.is_working !== false)
-        .sort((a: any, b: any) => a.order_priority - b.order_priority) as Staff[]
+      staffs.value = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter((s: any) => s.is_working !== false).sort((a: any, b: any) => a.order_priority - b.order_priority) as Staff[]
 
       const menuSnap = await getDocs(collection(db, 'menus'))
       menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Menu[]
 
       const configSnap = await getDoc(doc(db, 'shop_config', 'default_config'))
-      if (configSnap.exists())
-      {
-        shopConfig.value = configSnap.data() as ShopConfig
-        const hours = shopConfig.value.business_hours || { start: '09:00', end: '19:00' }
-        if (hours.start) openHour.value = parseInt(hours.start.split(':')[0]!, 10)
-        if (hours.end) closeHour.value = parseInt(hours.end.split(':')[0]!, 10)
+      if (configSnap.exists()) {
+        const data = configSnap.data()
+        shopConfig.value = {
+          holiday_weekdays: data.holiday_weekdays || [],
+          closed_dates: data.closed_dates || [],
+          business_hours: data.business_hours || { start: '09:00', end: '19:00' },
+          tax_rate: data.tax_rate ?? 10
+        }
+        const hours = shopConfig.value.business_hours
+        if (hours?.start) openHour.value = parseInt(hours.start.split(':')[0], 10)
+        if (hours?.end) closeHour.value = parseInt(hours.end.split(':')[0], 10)
       }
     }
 
@@ -114,34 +108,20 @@ const initData = async (fetchMaster = true) =>
 
     if (unsubscribe) unsubscribe()
 
-    const q = query(
-      collection(db, 'reservations'),
-      where('start_at', '>=', Timestamp.fromDate(startOfDay)),
-      where('start_at', '<', Timestamp.fromDate(endOfDay)),
-      orderBy('start_at', 'asc')
-    )
+    const q = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
 
-    unsubscribe = onSnapshot(q, (snapshot) =>
-    {
+    unsubscribe = onSnapshot(q, (snapshot) => {
       reservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
 
-      // 🔔 2. 新着検知ロジック
-      snapshot.docChanges().forEach((change) =>
-      {
-        if (change.type === 'added')
-        {
+      // 通知ロジック
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
           const data = change.doc.data()
-          // "WEB予約" かつ "作成されてから1分以内" のものだけ通知する
-          // (これがないと、リロードするたびに過去の予約通知が鳴ってしまいます)
           const createdAt = data.created_at?.toDate().getTime() || 0
           const now = new Date().getTime()
-          const isRecent = (now - createdAt) < 60000 // 60秒以内
-
-          if (data.source === 'web' && isRecent && !loading.value)
-          {
+          if (data.source === 'web' && (now - createdAt) < 60000 && !loading.value) {
             new Notification('✨ 新しいWEB予約が入りました！', {
-              body: `${data.customer_name}様\n${data.menu_items[0]?.title}`,
-              icon: '/favicon.ico' // アイコンがあれば指定
+              body: `${data.customer_name}様\n${data.menu_items[0]?.title}`
             })
           }
         }
@@ -152,11 +132,10 @@ const initData = async (fetchMaster = true) =>
   } catch (e) { console.error(e); loading.value = false }
 }
 
-const submitReservation = async () =>
-{
+const submitReservation = async () => {
   if (!newReservation.value.menu_id) return
   const menu = menus.value.find(m => m.id === newReservation.value.menu_id)
-  if (!menu) return // 🔒 安全策: メニューが見つからない場合は中断
+  if (!menu) return
 
   const startDate = new Date(newReservation.value.start_time)
   const endDate = new Date(startDate.getTime() + menu.duration_min * 60000)
@@ -167,55 +146,53 @@ const submitReservation = async () =>
     end_at: Timestamp.fromDate(endDate),
     customer_name: newReservation.value.customer_name || '電話予約',
     customer_phone: newReservation.value.customer_phone || '',
-    menu_items: [{ title: menu.title, duration: menu.duration_min }],
+    menu_items: [{ title: menu.title, duration: menu.duration_min, price: getTaxPrice(menu.price) }],
     source: 'phone',
     note: newReservation.value.note || '',
     status: 'confirmed'
   }
 
-  try
-  {
-    if (isEditing.value && editingId.value)
-    {
+  try {
+    if (isEditing.value && editingId.value) {
       await updateDoc(doc(db, 'reservations', editingId.value), payload)
-      dialog.alert('予約を更新しました')
-    } else
-    {
+      await dialog.alert('予約を更新しました')
+    } else {
       await addDoc(collection(db, 'reservations'), { ...payload, created_at: Timestamp.now() })
-      dialog.alert('予約を追加しました')
+      await dialog.alert('予約を追加しました')
     }
     showModal.value = false
-  } catch (e) { console.error(e); dialog.alert('処理失敗') }
+  } catch (e) { console.error(e); dialog.alert('処理に失敗しました') }
 }
 
-const confirmDelete = (id: string) => { deleteTargetId.value = id; showDeleteModal.value = true; showDetailModal.value = false }
-const executeDelete = async () =>
-{
-  if (!deleteTargetId.value) return; try
-  {
-    await deleteDoc(doc(db, 'reservations', deleteTargetId.value));
-    showDeleteModal.value = false;
-    deleteTargetId.value = null
-  } catch (e) { dialog.alert('削除失敗') }
+// 🗑️ 予約削除 (共通ダイアログ使用)
+const deleteReservation = async (id: string) => {
+  const ok = await dialog.confirm('本当に削除しますか？\n（復元できません）', '削除確認', 'danger')
+  if (!ok) return
+
+  try {
+    await deleteDoc(doc(db, 'reservations', id))
+    showDetailModal.value = false // 詳細モーダルも閉じる
+  } catch (e) {
+    console.error(e)
+    dialog.alert('削除に失敗しました')
+  }
 }
-const openReservationDetail = (res: Reservation) => { selectedReservation.value = res; showDetailModal.value = true }
-const approveReservation = async (id: string) =>
-{
-  try
-  {
-    await updateDoc(doc(db, 'reservations', id), {
-      status: 'confirmed'
-    });
-    dialog.alert('確定しました');
+
+// ✅ 予約確定 (共通ダイアログ使用)
+const approveReservation = async (id: string) => {
+  try {
+    await updateDoc(doc(db, 'reservations', id), { status: 'confirmed' })
+    await dialog.alert('予約を確定しました')
     showDetailModal.value = false
-  } catch (e) { dialog.alert('失敗') }
+  } catch (e) {
+    dialog.alert('承認に失敗しました')
+  }
 }
 
-const openEditModal = (res: Reservation) =>
-{
-  // メニューが存在するかチェック
-  const matchedMenu = menus.value.find(m => m.title === res.menu_items[0]?.title)
+const openReservationDetail = (res: Reservation) => { selectedReservation.value = res; showDetailModal.value = true }
 
+const openEditModal = (res: Reservation) => {
+  const matchedMenu = menus.value.find(m => m.title === res.menu_items[0]?.title)
   newReservation.value = {
     staff_id: res.staff_id,
     start_time: toLocalISOString(res.start_at.toDate()),
@@ -227,16 +204,14 @@ const openEditModal = (res: Reservation) =>
   isEditing.value = true; editingId.value = res.id; showDetailModal.value = false; showModal.value = true
 }
 
-const getLeftPosition = (startTs: Timestamp) =>
-{
+const getLeftPosition = (startTs: Timestamp) => {
   const date = startTs.toDate()
   let minutesFromOpen = (date.getHours() - openHour.value) * 60 + date.getMinutes()
   if (minutesFromOpen < 0) minutesFromOpen = 0
   const totalOpenMinutes = (closeHour.value - openHour.value) * 60
   return (minutesFromOpen / totalOpenMinutes) * 100
 }
-const getWidth = (startTs: Timestamp, endTs: Timestamp) =>
-{
+const getWidth = (startTs: Timestamp, endTs: Timestamp) => {
   let start = startTs.toDate().getTime(); const end = endTs.toDate().getTime()
   const openTime = new Date(startTs.toDate()); openTime.setHours(openHour.value, 0, 0, 0)
   if (start < openTime.getTime()) start = openTime.getTime()
@@ -244,8 +219,7 @@ const getWidth = (startTs: Timestamp, endTs: Timestamp) =>
   const totalOpenMinutes = (closeHour.value - openHour.value) * 60
   return (durationMinutes / totalOpenMinutes) * 100
 }
-const onMouseDown = (e: MouseEvent, staffId: string) =>
-{
+const onMouseDown = (e: MouseEvent, staffId: string) => {
   isDragging.value = true; dragStaffId.value = staffId
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const x = e.clientX - rect.left; dragStartX.value = (x / rect.width) * 100
@@ -254,8 +228,7 @@ const onMouseDown = (e: MouseEvent, staffId: string) =>
   const date = new Date(selectedDate.value); date.setHours(openHour.value, roundedMinutes, 0, 0)
   dragStartTime.value = date; dragEndTime.value = new Date(date.getTime() + 15 * 60000)
 }
-const onMouseMove = (e: MouseEvent) =>
-{
+const onMouseMove = (e: MouseEvent) => {
   if (!isDragging.value || !dragStartTime.value) return
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const x = e.clientX - rect.left
@@ -264,8 +237,7 @@ const onMouseMove = (e: MouseEvent) =>
   const roundedDate = new Date(Math.ceil(date.getTime() / (900000)) * 900000)
   if (roundedDate > dragStartTime.value) dragEndTime.value = roundedDate
 }
-const onMouseUp = () =>
-{
+const onMouseUp = () => {
   if (!isDragging.value || !dragStaffId.value || !dragStartTime.value || !dragEndTime.value) { isDragging.value = false; return }
   isEditing.value = false; editingId.value = null
   newReservation.value = {
@@ -277,14 +249,12 @@ const onMouseUp = () =>
 }
 const formatTime = (ts: Timestamp) => { const d = ts.toDate(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}` }
 const getStaffName = (id: string) => staffs.value.find(s => s.id === id)?.name || '未定'
-const toLocalISOString = (date: Date) =>
-{
+const toLocalISOString = (date: Date) => {
   const pad = (n: number) => n < 10 ? '0' + n : n
   return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes())
 }
 const formatDateJP = (d: Date) => { const days = ['日', '月', '火', '水', '木', '金', '土']; return `${d.getFullYear()}年 ${d.getMonth() + 1}月 ${d.getDate()}日 (${days[d.getDay()]})` }
-const getDragBarStyle = computed(() =>
-{
+const getDragBarStyle = computed(() => {
   if (!dragStartTime.value || !dragEndTime.value) return {}
   const start = dragStartTime.value.getTime(); const end = dragEndTime.value.getTime()
   const totalOpenMinutes = (closeHour.value - openHour.value) * 60 * 60000
@@ -293,27 +263,23 @@ const getDragBarStyle = computed(() =>
   const width = ((end - start) / totalOpenMinutes) * 100
   return { left: `${left}%`, width: `${width}%` }
 })
-const getTooltipText = (res: Reservation) =>
-{
+const getTooltipText = (res: Reservation) => {
   const sourceType = res.source === 'phone' ? '【電話】' : '【WEB】'
   const statusText = res.status === 'pending' ? '【仮予約】' : ''
   let text = `${statusText}${sourceType}\n${formatTime(res.start_at)} - ${formatTime(res.end_at)}\n${res.menu_items[0]?.title}\n${res.customer_name || '名称未設定'}`
   if (res.note) text += `\n📝 ${res.note}`
   return text
 }
-const getReservationClass = (res: Reservation) =>
-{
+const getReservationClass = (res: Reservation) => {
   if (res.status === 'pending') return 'res-pending'
   return res.source === 'phone' ? 'res-phone' : 'res-web'
 }
-const calendarDays = computed(() =>
-{
+const calendarDays = computed(() => {
   const year = selectedDate.value.getFullYear(); const month = selectedDate.value.getMonth()
   const firstDay = new Date(year, month, 1); const lastDay = new Date(year, month + 1, 0)
   const days = []
   for (let i = 0; i < firstDay.getDay(); i++) days.push({ day: '', isCurrentMonth: false })
-  for (let d = 1; d <= lastDay.getDate(); d++)
-  {
+  for (let d = 1; d <= lastDay.getDate(); d++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
     const dateObj = new Date(year, month, d)
     const isHoliday = shopConfig.value.holiday_weekdays?.includes(dateObj.getDay()) || shopConfig.value.closed_dates?.includes(dateStr)
@@ -372,7 +338,10 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
                   <div class="customer-info">
                     <div v-if="res.customer_name" class="c-row"><span class="icon">👤</span> {{ res.customer_name }}
                     </div>
+                    <div v-if="res.customer_phone" class="c-row"><span class="icon">📞</span> {{ res.customer_phone }}
+                    </div>
                   </div>
+                  <div v-if="res.note" class="note-preview" :title="res.note">📝 メモあり</div>
                   <div class="staff-badge">担当: {{ getStaffName(res.staff_id) }}</div>
                 </div>
               </div>
@@ -420,8 +389,10 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
                     <div v-if="res.staff_id === staff.id" class="reservation-bar" :class="getReservationClass(res)"
                       :style="{ left: `${getLeftPosition(res.start_at)}%`, width: `${getWidth(res.start_at, res.end_at)}%` }"
                       :title="getTooltipText(res)" @mousedown.stop @click.stop="openReservationDetail(res)">
-                      <span class="bar-text"><span v-if="res.status === 'pending'">【未】</span>{{ res.menu_items[0]?.title
-                        }} <span v-if="res.customer_name">/ {{ res.customer_name }}</span></span>
+                      <span class="bar-text">
+                        <span v-if="res.status === 'pending'">【未】</span>
+                        {{ res.menu_items[0]?.title }}
+                      </span>
                     </div>
                   </template>
                 </transition-group>
@@ -440,6 +411,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
           <h3>{{ isEditing ? '予約の編集' : '新規予約 (電話受付)' }}</h3>
           <button class="close-x-btn" @click="showModal = false">×</button>
         </div>
+
         <div class="form-group"><label>担当スタッフ</label><select v-model="newReservation.staff_id" disabled>
             <option v-for="s in staffs" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select></div>
@@ -456,6 +428,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
         </div>
+
         <div class="modal-actions right-align">
           <button class="save-btn" @click="submitReservation">{{ isEditing ? '更新する' : '登録する' }}</button>
         </div>
@@ -493,28 +466,16 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         </div>
 
         <div class="modal-actions split">
-          <button class="delete-confirm-btn" @click="confirmDelete(selectedReservation.id)">🗑️ 削除</button>
+          <button class="delete-confirm-btn" @click="deleteReservation(selectedReservation.id)">🗑️ 削除</button>
           <button class="edit-btn" @click="openEditModal(selectedReservation)">✏️ 編集</button>
         </div>
       </div>
     </div>
-
-    <div v-if="showDeleteModal" class="modal-overlay" @click.self="showDeleteModal = false">
-      <div class="modal-content delete-modal">
-        <h3>予約の削除</h3>
-        <p class="delete-msg">この予約を本当に削除しますか？<br>この操作は取り消せません。</p>
-        <div class="modal-actions">
-          <button class="cancel-btn" @click="showDeleteModal = false">キャンセル</button>
-          <button class="delete-confirm-btn" @click="executeDelete">削除する</button>
-        </div>
-      </div>
-    </div>
-
   </div>
 </template>
 
 <style scoped>
-/* ... (既存CSSはそのまま) ... */
+/* 共通スタイル */
 .admin-container {
   height: 100vh;
   display: flex;
@@ -526,7 +487,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 .admin-header {
   background: #2c3e50;
   color: white;
-  padding: 0 1rem;
+  padding: 0.5rem 1rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -665,7 +626,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   font-size: 0.9rem;
 }
 
-/* カンバンカード */
 .kanban-card {
   background: white;
   padding: 0.6rem;
@@ -687,24 +647,20 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
-/* 🔵 WEB予約 (確定) */
 .kanban-card.res-web {
   border-left-color: #3498db;
 }
 
-/* 🟠 電話予約 (確定) */
 .kanban-card.res-phone {
   border-left-color: #e67e22;
 }
 
-/* 🟣 仮予約 (未確定) - 背景色も変えて目立たせる */
+/* 🟣 仮予約のスタイル (ここを追加！) */
 .kanban-card.res-pending {
   border-left-color: #9b59b6;
   background-color: #f3e5f5;
-  /* 薄い紫 */
 }
 
-/* 仮予約アイコン「未」 */
 .status-icon-pending {
   color: #fff;
   background-color: #9b59b6;
@@ -714,16 +670,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   border-radius: 4px;
   margin-top: 4px;
   display: inline-block;
-}
-
-.status-pending {
-  color: #9b59b6;
-  font-weight: bold;
-}
-
-.status-confirmed {
-  color: #27ae60;
-  font-weight: bold;
 }
 
 .time-box {
@@ -792,10 +738,6 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   font-size: 0.75rem;
   color: #e67e22;
   font-weight: bold;
-}
-
-.delete-res-btn {
-  display: none;
 }
 
 .panel-right {
@@ -1027,14 +969,10 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
   background-color: #e67e22;
 }
 
-/* 🟣 仮予約バー - ストライプで「未確定」感を出す */
+/* 🟣 仮予約バー (ここを追加！) */
 .reservation-bar.res-pending {
   background-color: #9b59b6;
-  background-image: repeating-linear-gradient(45deg,
-      transparent,
-      transparent 5px,
-      rgba(255, 255, 255, 0.2) 5px,
-      rgba(255, 255, 255, 0.2) 10px);
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(255, 255, 255, 0.2) 5px, rgba(255, 255, 255, 0.2) 10px);
   border: 1px solid #8e44ad;
 }
 
@@ -1288,21 +1226,14 @@ textarea {
   background: #e67e22;
 }
 
-.delete-modal {
-  max-width: 350px;
-  text-align: center;
+.tag-phone {
+  color: #e67e22;
+  font-weight: bold;
 }
 
-.delete-msg {
-  margin: 1.5rem 0;
-  line-height: 1.5;
-  color: #555;
-  font-size: 0.9rem;
-}
-
-.delete-modal .modal-actions {
-  gap: 0.5rem;
-  justify-content: center;
+.tag-web {
+  color: #3498db;
+  font-weight: bold;
 }
 
 @media (max-width: 768px) {

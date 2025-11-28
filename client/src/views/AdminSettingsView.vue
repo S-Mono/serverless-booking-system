@@ -5,31 +5,33 @@ import { db } from '../lib/firebase'
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { seedDatabase } from '../lib/seed'
 import { useDialogStore } from '../stores/dialog'
-const dialog = useDialogStore() // 👈 ストア利用
+
+const dialog = useDialogStore()
+const router = useRouter()
 
 // --- 型定義 ---
-interface ShopConfig
-{
+interface ShopConfig {
   holiday_weekdays: number[]
   closed_dates: string[]
   business_hours: { start: string; end: string }
+  tax_rate: number // 👈 追加: 消費税率
 }
 
-interface Staff
-{
+interface Staff {
   id: string; name: string; display_name: string; order_priority: number;
   roles: { accepts_new_customer: boolean; accepts_free_booking: boolean };
   is_working: boolean;
 }
 
-const router = useRouter()
 const staffs = ref<Staff[]>([])
 const loading = ref(true)
 
+// 店舗設定データ
 const config = ref<ShopConfig>({
   holiday_weekdays: [],
   closed_dates: [],
-  business_hours: { start: '09:00', end: '19:00' }
+  business_hours: { start: '09:00', end: '19:00' },
+  tax_rate: 10 // 👈 デフォルト10%
 })
 
 const newStaff = ref({
@@ -40,106 +42,84 @@ const newStaff = ref({
 const weekdays = ['日', '月', '火', '水', '木', '金', '土']
 const tempClosedDate = ref('')
 
-// --- データ操作 ---
-const fetchData = async () =>
-{
+// --- データ取得 ---
+const fetchData = async () => {
   loading.value = true
-  try
-  {
+  try {
     const snap = await getDocs(collection(db, 'staffs'))
-    staffs.value = snap.docs.map(doc =>
-    {
+    staffs.value = snap.docs.map(doc => {
       const d = doc.data()
       return { id: doc.id, ...d, is_working: d.is_working ?? true }
     })
       .sort((a: any, b: any) => a.order_priority - b.order_priority) as Staff[]
 
     const configSnap = await getDoc(doc(db, 'shop_config', 'default_config'))
-    if (configSnap.exists())
-    {
+    if (configSnap.exists()) {
       const data = configSnap.data() as any
       config.value = {
         holiday_weekdays: data.holiday_weekdays || [],
         closed_dates: data.closed_dates || [],
-        business_hours: data.business_hours || { start: '09:00', end: '19:00' }
+        business_hours: data.business_hours || { start: '09:00', end: '19:00' },
+        tax_rate: data.tax_rate ?? 10 // 👈 読み込み（なければ10）
       }
     }
   } catch (e) { console.error(e) } finally { loading.value = false }
 }
 
-const saveConfig = async () =>
-{
-  try
-  {
+// --- 設定保存 ---
+const saveConfig = async () => {
+  try {
     await updateDoc(doc(db, 'shop_config', 'default_config'), {
       holiday_weekdays: config.value.holiday_weekdays,
       closed_dates: config.value.closed_dates,
-      business_hours: config.value.business_hours
+      business_hours: config.value.business_hours,
+      tax_rate: Number(config.value.tax_rate) // 👈 数値として保存
     })
     dialog.alert('店舗設定を保存しました')
   } catch (e) { console.error(e); dialog.alert('保存失敗') }
 }
 
-const addClosedDate = () =>
-{
-  if (tempClosedDate.value && !config.value.closed_dates.includes(tempClosedDate.value))
-  {
+const addClosedDate = () => {
+  if (tempClosedDate.value && !config.value.closed_dates.includes(tempClosedDate.value)) {
     config.value.closed_dates.push(tempClosedDate.value)
     config.value.closed_dates.sort()
     tempClosedDate.value = ''
   }
 }
-const removeClosedDate = (date: string) =>
-{
+const removeClosedDate = (date: string) => {
   config.value.closed_dates = config.value.closed_dates.filter(d => d !== date)
 }
 
-const saveStaff = async (staff: Staff) =>
-{
+const saveStaff = async (staff: Staff) => {
   await updateDoc(doc(db, 'staffs', staff.id), { ...staff })
   dialog.alert(`"${staff.name}" を更新しました`)
 }
-const addStaff = async () =>
-{
+const addStaff = async () => {
   if (!newStaff.value.name) return
   await addDoc(collection(db, 'staffs'), { ...newStaff.value })
   dialog.alert('追加しました')
   fetchStaffs()
 }
-const removeStaff = async (id: string) =>
-{
-  const dlg = await dialog.confirm('本当に削除しますか？', '削除確認', 'danger')
-  if (!dlg) return
-  try
-  {
+const removeStaff = async (id: string) => {
+  const ok = await dialog.confirm('削除しますか？', '確認', 'danger')
+  if (ok) {
     await deleteDoc(doc(db, 'staffs', id))
     fetchStaffs()
-  } catch (error)
-  {
-    dialog.alert('削除に失敗しました', 'エラー')
   }
-
 }
 const fetchStaffs = fetchData
 
-// ⚡ 開発者用シード (パスワード保護付き)
-const handleSeed = async () =>
-{
+const handleSeed = async () => {
   const password = prompt('開発者用パスワードを入力してください')
-
-  if (password === null) return // キャンセル時
-
-  if (password === 'rukario1109')
-  {
-    const dlg = await dialog.confirm('【警告】\n現在のデータがすべて消去され、初期状態に戻ります。\n本当によろしいですか？', '初期データ投入確認', 'danger')
-    if (dlg)
-    {
+  if (password === null) return
+  if (password === 'rukario1109') {
+    const ok = await dialog.confirm('現在のデータがすべて消去され、初期状態に戻ります。\n本当によろしいですか？', '警告', 'danger')
+    if (ok) {
       await seedDatabase()
-      fetchData() // 画面を再読み込み
+      fetchData()
     }
-  } else
-  {
-    dialog.alert('パスワードが違います。操作はキャンセルされました。')
+  } else {
+    dialog.alert('パスワードが違います')
   }
 }
 const goBack = () => router.push('/admin')
@@ -159,8 +139,8 @@ onMounted(() => { fetchData() })
 
         <aside class="settings-sidebar">
           <div class="side-card nav-card">
-            <h3>設定メニュー</h3>
-            <p class="side-desc">メニューの追加・編集はこちらから行えます。</p>
+            <h3>メニュー設定</h3>
+            <p class="side-desc">施術メニューの追加・編集や、担当スタッフの紐付け設定はこちら。</p>
             <button @click="router.push('/admin/settings/menus')" class="menu-link-btn">
               📋 メニュー・担当設定
             </button>
@@ -169,6 +149,20 @@ onMounted(() => { fetchData() })
 
         <div class="settings-main">
           <div class="cards-grid">
+
+            <div class="setting-card">
+              <h3>💰 消費税設定</h3>
+              <p class="desc">メニュー価格に加算する消費税率を設定します。</p>
+              <div class="staff-grid">
+                <div class="input-group">
+                  <label>消費税率 (%)</label>
+                  <input type="number" v-model="config.tax_rate" min="0" max="100" />
+                </div>
+              </div>
+              <div class="action-row">
+                <button @click="saveConfig" class="save-main-btn">税率を保存</button>
+              </div>
+            </div>
 
             <div class="setting-card calendar-card">
               <h3>📅 カレンダー・休日設定</h3>
@@ -194,7 +188,7 @@ onMounted(() => { fetchData() })
                 </div>
               </div>
               <div class="action-row">
-                <button @click="saveConfig" class="save-main-btn">保存</button>
+                <button @click="saveConfig" class="save-main-btn">カレンダー設定を保存</button>
               </div>
             </div>
 
@@ -213,7 +207,7 @@ onMounted(() => { fetchData() })
                 </div>
               </div>
               <div class="action-row">
-                <button @click="saveConfig" class="save-main-btn">保存</button>
+                <button @click="saveConfig" class="save-main-btn">時間を保存</button>
               </div>
             </div>
 
@@ -263,7 +257,7 @@ onMounted(() => { fetchData() })
 </template>
 
 <style scoped>
-/* 全体レイアウト */
+/* CSSは前回と同じ */
 .settings-container {
   height: 100%;
   display: flex;
@@ -300,7 +294,6 @@ onMounted(() => { fetchData() })
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* ボディ部分 (スクロールあり) */
 .settings-body {
   flex: 1;
   overflow-y: auto;
@@ -309,17 +302,14 @@ onMounted(() => { fetchData() })
   box-sizing: border-box;
 }
 
-/* 📐 レイアウトグリッド (左サイドバー + 右メイン) */
 .layout-grid {
   display: grid;
   grid-template-columns: 260px 1fr;
-  /* 左固定幅、右可変 */
   gap: 2rem;
   max-width: 1200px;
   margin: 0 auto;
 }
 
-/* サイドバー */
 .settings-sidebar {
   display: flex;
   flex-direction: column;
@@ -367,16 +357,13 @@ onMounted(() => { fetchData() })
   background: #2980b9;
 }
 
-/* メインエリア (カードグリッド) */
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  /* 自動で列数を調整 */
   gap: 1.5rem;
   align-items: start;
 }
 
-/* 各カード共通 */
 .setting-card {
   background: white;
   padding: 1.5rem;
@@ -393,12 +380,16 @@ onMounted(() => { fetchData() })
   color: #333;
 }
 
-/* 横幅いっぱい使うカード (スタッフ管理など) */
 .full-width {
   grid-column: 1 / -1;
 }
 
-/* 個別スタイル */
+.desc {
+  font-size: 0.9rem;
+  color: #666;
+  margin-bottom: 1.5rem;
+}
+
 .config-section {
   margin-bottom: 1.5rem;
 }
@@ -502,7 +493,6 @@ onMounted(() => { fetchData() })
   border-radius: 4px;
 }
 
-/* スタッフリスト */
 .staff-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -535,7 +525,17 @@ onMounted(() => { fetchData() })
 
 .staff-grid {
   display: flex;
-  gap: 0.5rem;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  /* 👈 ここを 0.5rem から 1.5rem に広げました */
+}
+
+/* もし .staff-grid を使っていないカードがある場合、汎用的に .input-row にもマージンをつける */
+.input-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  /* 👈 ここも広げる */
 }
 
 .roles-grid {
@@ -607,7 +607,6 @@ onMounted(() => { fetchData() })
   cursor: pointer;
 }
 
-/* 📱 スマホ対応 */
 @media (max-width: 768px) {
   .layout-grid {
     grid-template-columns: 1fr;
@@ -616,7 +615,6 @@ onMounted(() => { fetchData() })
 
   .settings-sidebar {
     order: -1;
-    /* サイドバーを上に */
   }
 
   .staff-list {
