@@ -15,6 +15,8 @@ interface Customer {
     phone_number: string
     memo?: string
     preferred_category?: 'barber' | 'beauty'
+    // true => 既存顧客, false => 新規顧客
+    is_existing_customer?: boolean
     deleted_at?: Timestamp | null
 }
 
@@ -32,7 +34,7 @@ const searchQuery = ref('')
 
 const showModal = ref(false)
 const isEditing = ref(false)
-const editForm = ref<Customer>({ id: '', name_kana: '', phone_number: '', memo: '', preferred_category: 'barber' })
+const editForm = ref<Customer>({ id: '', name_kana: '', phone_number: '', memo: '', preferred_category: 'barber', is_existing_customer: true })
 const history = ref<ReservationHistory[]>([])
 
 const fetchCustomers = async () => {
@@ -90,6 +92,8 @@ const openEditModal = async (customer?: Customer) => {
     if (customer) {
         isEditing.value = true
         editForm.value = JSON.parse(JSON.stringify(customer))
+        // 編集時、is_existing_customer が存在しないケースに備えてデフォルトを付与
+        if (typeof editForm.value.is_existing_customer === 'undefined') editForm.value.is_existing_customer = true
         if (!editForm.value.preferred_category) editForm.value.preferred_category = 'barber'
         await fetchHistory(customer.id)
     } else {
@@ -108,13 +112,15 @@ const saveCustomer = async () => {
                 name_kana: editForm.value.name_kana,
                 phone_number: editForm.value.phone_number,
                 memo: editForm.value.memo || '',
-                preferred_category: editForm.value.preferred_category
+                preferred_category: editForm.value.preferred_category,
+                is_existing_customer: editForm.value.is_existing_customer ?? true
             })
         } else {
             await addDoc(collection(db, 'customers'), {
                 ...editForm.value,
                 created_at: Timestamp.now(),
-                is_existing_customer: true,
+                // 作成時はフォームの選択に従う
+                is_existing_customer: editForm.value.is_existing_customer ?? true,
                 deleted_at: null
             })
         }
@@ -194,6 +200,7 @@ onMounted(() => { fetchCustomers() })
                             <tr>
                                 <th>お名前 (カナ)</th>
                                 <th>電話番号</th>
+                                <th>種別</th>
                                 <th>よく利用する</th>
                                 <th>メモ</th>
                                 <th class="actions-col">操作</th>
@@ -203,6 +210,7 @@ onMounted(() => { fetchCustomers() })
                             <tr v-for="cust in filteredCustomers" :key="cust.id">
                                 <td class="name-cell">{{ cust.name_kana }}</td>
                                 <td>{{ cust.phone_number }}</td>
+                                <td>{{ cust.is_existing_customer ? '既存' : '新規' }}</td>
                                 <td>{{ cust.preferred_category === 'beauty' ? '美容' : '理容' }}</td>
                                 <td class="memo-cell">{{ cust.memo }}</td>
                                 <td class="actions-cell">
@@ -244,6 +252,13 @@ onMounted(() => { fetchCustomers() })
                                     理容</label>
                                 <label><input type="radio" value="beauty" v-model="editForm.preferred_category">
                                     美容</label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>顧客タイプ</label>
+                            <div class="radio-group">
+                                <label><input type="radio" :value="true" v-model="editForm.is_existing_customer"> 既存顧客</label>
+                                <label><input type="radio" :value="false" v-model="editForm.is_existing_customer"> 新規顧客</label>
                             </div>
                         </div>
                         <div class="form-group">
