@@ -312,7 +312,7 @@ const submitReservation = async () => {
 </template>
 
 <style scoped>
-/* --- 全体レイアウト --- */
+/* 全体レイアウト */
 .home-container {
   max-width: 1024px;
   margin: 0 auto;
@@ -322,54 +322,63 @@ const submitReservation = async () => {
   min-height: 100%;
 }
 
-/* --- タブナビゲーション --- */
+/* --- タブナビゲーション (フォルダ風) --- */
 .sticky-tabs {
   position: sticky;
   top: 60px;
   z-index: 90;
-  background-color: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(5px);
-  border-bottom: 1px solid #eee;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-  width: 100%;
+  background-color: #f4f5f7;
+  padding-top: 1.5rem;
+  margin-bottom: 0;
 }
 
 .tab-container {
   display: flex;
   max-width: 1024px;
   margin: 0 auto;
+  border-bottom: 1px solid #ddd;
 }
 
 .tab-btn {
   flex: 1;
   padding: 1rem;
-  border: none;
-  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: #e0e0e0;
+  color: #666;
   font-weight: bold;
-  color: #888;
-  cursor: pointer;
-  border-bottom: 3px solid transparent;
-  transition: all 0.2s;
   font-size: 1.1rem;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+  transition: all 0.2s;
+  margin-right: 4px;
+}
+
+.tab-btn:last-child {
+  margin-right: 0;
 }
 
 .tab-btn:hover {
-  color: #555;
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: #d5d5d5;
+  color: #333;
 }
 
 .tab-btn.active {
-  color: #3498db;
-  border-bottom-color: #3498db;
+  background: #fff;
+  color: #333;
+  border-color: #ddd;
+  border-bottom: 1px solid #fff;
+  margin-bottom: -1px;
+  position: relative;
+  z-index: 1;
+  border-top: 4px solid #3498db;
 }
 
 .tab-btn.active:nth-child(2) {
   border-top-color: #27ae60;
 }
 
-/* カイロ用色分けが必要ならここにborder-top追加 */
-
-/* --- コンテンツエリア --- */
+/* --- コンテンツエリア (枠で囲む) --- */
 .menu-section-wrapper {
   background: #fff;
   border: 1px solid #ddd;
@@ -395,7 +404,6 @@ const submitReservation = async () => {
   margin-bottom: 2rem;
 }
 
-/* --- ユーザー情報 --- */
 .user-status {
   background: #f8f9fa;
   padding: 1rem;
@@ -418,7 +426,7 @@ const submitReservation = async () => {
   font-weight: bold;
 }
 
-/* --- メニューリスト --- */
+/* --- メニューリスト (グリッド) --- */
 .menu-list {
   list-style: none;
   padding: 0;
@@ -429,8 +437,6 @@ const submitReservation = async () => {
 
 .menu-item {
   display: flex;
-  /* PCでは横並び */
-  flex-direction: row;
   align-items: center;
   gap: 1rem;
   padding: 1.5rem;
@@ -440,6 +446,9 @@ const submitReservation = async () => {
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+
+  /* 👇 追加: 狭いときに折り返す */
+  flex-wrap: wrap;
 }
 
 .menu-item:hover {
@@ -456,7 +465,6 @@ const submitReservation = async () => {
 
 .check-icon {
   font-size: 1.5rem;
-  flex-shrink: 0;
 }
 
 .menu-info {
@@ -464,15 +472,13 @@ const submitReservation = async () => {
   flex-direction: column;
   gap: 0.5rem;
   flex: 1;
-  /* 幅あふれ防止 */
-  min-width: 0;
+  min-width: 150px;
+  /* 幅確保 */
 }
 
 .menu-title {
   font-weight: bold;
   font-size: 1.1rem;
-  /* 長いタイトル対策 */
-  white-space: normal;
 }
 
 .menu-meta {
@@ -499,13 +505,46 @@ const submitReservation = async () => {
   background: #fafafa;
 }
 
+/* --- その他 --- */
 .loading {
   text-align: center;
   color: #666;
   margin-top: 4rem;
 }
 
-/* --- 下部アクションバー --- */
+.login-prompt {
+  padding: 4rem 1rem;
+  text-align: center;
+}
+
+.prompt-card {
+  background: #f8f9fa;
+  padding: 3rem;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.go-login-btn {
+  background: #42b883;
+  color: white;
+  border: none;
+  padding: 1rem 3rem;
+  font-size: 1.2rem;
+  font-weight: bold;
+  border-radius: 30px;
+  cursor: pointer;
+  margin-top: 2rem;
+  box-shadow: 0 4px 6px rgba(66, 184, 131, 0.3);
+  transition: transform 0.2s;
+}
+
+.go-login-btn:hover {
+  transform: translateY(-2px);
+  background: #3aa876;
+}
+
 .bottom-action {
   position: fixed;
   bottom: 0;
@@ -554,7 +593,7 @@ const submitReservation = async () => {
   transform: translateY(-2px);
 }
 
-/* --- モーダル系 --- */
+/* モーダル */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -708,34 +747,6 @@ textarea {
   font-size: 1rem;
 }
 
-.login-prompt {
-  padding: 4rem 1rem;
-  text-align: center;
-}
-
-.prompt-card {
-  background: #f8f9fa;
-  padding: 3rem;
-  border-radius: 8px;
-  border: 1px solid #ddd;
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-.go-login-btn {
-  background: #42b883;
-  color: white;
-  border: none;
-  padding: 1rem 3rem;
-  font-size: 1.2rem;
-  font-weight: bold;
-  border-radius: 30px;
-  cursor: pointer;
-  margin-top: 2rem;
-  box-shadow: 0 4px 6px rgba(66, 184, 131, 0.3);
-  transition: transform 0.2s;
-}
-
 /* --- 📱 スマホ対応 (768px以下) --- */
 @media (max-width: 768px) {
   .home-container {
@@ -743,6 +754,7 @@ textarea {
     padding-right: 0;
   }
 
+  /* タブ微調整 */
   .tab-btn {
     font-size: 1rem;
     padding: 0.8rem;
@@ -750,6 +762,7 @@ textarea {
     border-radius: 4px 4px 0 0;
   }
 
+  /* コンテンツエリアを幅いっぱいに */
   .menu-section-wrapper {
     border-radius: 0;
     border-left: none;
@@ -757,39 +770,32 @@ textarea {
     padding: 1.5rem 1rem;
   }
 
+  /* メニューリストを1列に */
   .menu-list {
     grid-template-columns: 1fr;
     gap: 0.8rem;
   }
 
-  /* 👇 スマホ時のカードレイアウト修正 */
+  /* カード内の余白調整 */
   .menu-item {
-    flex-direction: column;
-    /* 縦並び */
-    align-items: flex-start;
-    /* 左寄せ */
     padding: 1rem;
     gap: 0.8rem;
   }
 
-  .check-icon {
-    align-self: flex-start;
-    /* チェックを左上に */
-    margin-bottom: -0.5rem;
-    /* 少し詰める */
-  }
-
-  .menu-info {
-    width: 100%;
+  /* タイトルと金額のバランス */
+  .menu-title {
+    font-size: 1rem;
   }
 
   .menu-meta {
-    width: 100%;
+    font-size: 0.85rem;
+    gap: 0.5rem;
     justify-content: space-between;
-    /* 時間と金額を左右に */
-    margin-top: 0.5rem;
-    border-top: 1px dashed #eee;
-    padding-top: 0.5rem;
+    width: 100%;
+  }
+
+  .menu-price {
+    font-size: 1.1rem;
   }
 
   .bottom-action {
