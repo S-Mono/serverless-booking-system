@@ -1,31 +1,50 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { auth, db } from '../lib/firebase' // 👈 dbを追加
+import { auth } from '../lib/firebase'
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithRedirect, // 👈 変更: リダイレクト用
+  getRedirectResult   // 👈 追加: 戻ってきた時の処理用
 } from 'firebase/auth'
-import { doc, setDoc, Timestamp } from 'firebase/firestore' // 👈 追加
 import liff from '@line/liff'
 import { seedDatabase } from '../lib/seed'
 
 const router = useRouter()
 
+// モード切替 (ログイン / 新規登録)
 const isLoginMode = ref(true)
+
+// 入力値
 const phoneNumber = ref('')
 const password = ref('')
-const preferredCategory = ref('barber') // 👈 追加: デフォルトは理容
 
+// 状態
 const loading = ref(false)
 const message = ref('')
-const liffLoading = ref(true)
+const liffLoading = ref(true) // LIFF初期化中フラグ
 
+// 擬似メールドメイン
 const PSEUDO_DOMAIN = '@local.booking-system'
 
 onMounted(async () => {
+  // 🟢 1. Googleリダイレクトログインからの帰還チェック
+  try {
+    const result = await getRedirectResult(auth)
+    if (result) {
+      // ログイン成功して戻ってきた場合
+      console.log('Google Login Success:', result.user)
+      router.push('/')
+      return
+    }
+  } catch (error: any) {
+    console.error('Google Redirect Error:', error)
+    message.value = `ログインエラー: ${error.message}`
+  }
+
+  // 🟢 2. LIFF初期化
   try {
     const liffId = import.meta.env.VITE_LIFF_ID
     if (liffId) {
@@ -44,21 +63,22 @@ onMounted(async () => {
   }
 })
 
+// 🔵 Googleログイン処理 (リダイレクト版)
 const loginWithGoogle = async () => {
   loading.value = true
   message.value = ''
   try {
     const provider = new GoogleAuthProvider()
-    await signInWithPopup(auth, provider)
-    router.push('/')
+    // 画面遷移してログイン (ページが切り替わります)
+    await signInWithRedirect(auth, provider)
   } catch (error: any) {
     console.error(error)
     message.value = `Googleログイン失敗: ${error.message}`
-  } finally {
     loading.value = false
   }
 }
 
+// 📞 電話番号認証処理 (既存のまま)
 const handleAuth = async () => {
   loading.value = true
   message.value = ''
@@ -67,22 +87,10 @@ const handleAuth = async () => {
     const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
 
     if (isLoginMode.value) {
-      // ログイン
       await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
       router.push('/')
     } else {
-      // 新規登録
-      const userCredential = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
-
-      // 🆕 顧客プロファイルを同時に作成する
-      await setDoc(doc(db, 'customers', userCredential.user.uid), {
-        phone_number: phoneNumber.value,
-        preferred_category: preferredCategory.value, // 👈 選択したカテゴリを保存
-        is_existing_customer: false, // 新規なのでfalse
-        created_at: Timestamp.now(),
-        updated_at: Timestamp.now()
-      })
-
+      await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
       message.value = '登録完了！自動的にログインしました。'
       router.push('/')
     }
@@ -123,21 +131,6 @@ const handleAuth = async () => {
       <div class="form-group">
         <label>パスワード</label>
         <input type="password" v-model="password" placeholder="6文字以上" required minlength="6" />
-      </div>
-
-      <div v-if="!isLoginMode" class="form-group">
-        <label>よく利用するメニュー <span class="required">必須</span></label>
-        <div class="radio-group">
-          <label class="radio-item">
-            <input type="radio" value="barber" v-model="preferredCategory">
-            💈 理容
-          </label>
-          <label class="radio-item">
-            <input type="radio" value="beauty" v-model="preferredCategory">
-            💇‍♀️ 美容
-          </label>
-        </div>
-        <p class="hint">※ ログイン時の初期表示に使用します（後で変更可能）</p>
       </div>
 
       <button type="submit" class="submit-btn" :disabled="loading">
@@ -186,6 +179,7 @@ h2 {
   margin-bottom: 1rem;
 }
 
+/* Googleボタン */
 .social-login {
   margin-bottom: 1.5rem;
 }
@@ -257,14 +251,7 @@ label {
   font-size: 0.9rem;
 }
 
-.required {
-  color: #e74c3c;
-  font-size: 0.8rem;
-  margin-left: 0.3rem;
-}
-
-input[type="tel"],
-input[type="password"] {
+input {
   padding: 0.8rem;
   font-size: 1.1rem;
   border: 1px solid #ccc;
@@ -312,6 +299,7 @@ input[type="password"] {
   text-decoration: underline;
 }
 
+/* 開発用ツール */
 .dev-tools {
   margin-top: 3rem;
   border-top: 1px dashed #ccc;
@@ -337,27 +325,5 @@ input[type="password"] {
 
 .seed-btn:hover {
   background: #444;
-}
-
-/* ラジオボタン */
-.radio-group {
-  display: flex;
-  gap: 1.5rem;
-  padding: 0.5rem;
-  border: 1px solid #eee;
-  border-radius: 4px;
-}
-
-.radio-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-}
-
-.hint {
-  font-size: 0.8rem;
-  color: #999;
-  margin-top: 0.5rem;
 }
 </style>
