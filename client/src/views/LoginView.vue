@@ -22,12 +22,20 @@ const loading = ref(false)
 const message = ref('')
 const liffLoading = ref(true)
 const isLineApp = ref(false)
+const debugInfo = ref('') // デバッグ用
 
 const PSEUDO_DOMAIN = '@local.booking-system'
 
+// LIFF IDの取得（デバッグ表示用）
+const liffIdEnv = import.meta.env.VITE_LIFF_ID || '(未設定)'
+
 onMounted(async () => {
-  // 1. LINEアプリ判定
-  if (/Line/i.test(navigator.userAgent)) {
+  // 1. UA判定
+  const ua = navigator.userAgent
+  const isLineUA = /Line/i.test(ua)
+  debugInfo.value += `UA: ${ua}\nLineUA判定: ${isLineUA}\n`
+
+  if (isLineUA) {
     isLineApp.value = true
   }
 
@@ -35,7 +43,6 @@ onMounted(async () => {
   try {
     const result = await getRedirectResult(auth)
     if (result) {
-      console.log('Google Login Success')
       router.push('/')
       return
     }
@@ -45,27 +52,43 @@ onMounted(async () => {
     }
   }
 
-  // 🟢 3. LIFF初期化 (ローカル以外でのみ実行)
-  if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    try {
-      const liffId = import.meta.env.VITE_LIFF_ID
-      if (liffId) {
-        await liff.init({ liffId })
-        if (liff.isInClient()) {
-          isLineApp.value = true
-        }
+  // 3. LIFF初期化
+  try {
+    const liffId = import.meta.env.VITE_LIFF_ID
+    debugInfo.value += `LIFF ID: ${liffId}\n`
+
+    if (liffId) {
+      await liff.init({ liffId })
+      debugInfo.value += `LIFF Init成功. InClient: ${liff.isInClient()}\n`
+
+      if (liff.isInClient()) {
+        isLineApp.value = true
       }
-    } catch (error) {
-      console.error('LIFF init failed', error)
-    } finally {
-      liffLoading.value = false
+    } else {
+      debugInfo.value += 'ERROR: VITE_LIFF_IDがありません\n'
     }
-  } else {
-    // ローカル環境: LIFF初期化をスキップ
-    console.log('Localhost detected: Skipped LIFF init')
+  } catch (error: any) {
+    console.error('LIFF init failed', error)
+    debugInfo.value += `LIFF Init失敗: ${error.message}\n`
+  } finally {
     liffLoading.value = false
   }
 })
+
+// 外部ブラウザを開く処理
+const openExternalBrowser = async () => {
+  const url = window.location.href
+
+  // LIFFが使えるならLIFFで開く
+  if (liff.id && liff.isInClient()) {
+    await liff.openWindow({ url, external: true })
+  } else {
+    // LIFFが使えない場合は通常リンクとして開く（Android等で有効）
+    window.open(url, '_system')
+    // またはユーザーにコピーを促す
+    prompt('以下のURLをブラウザ(Chrome/Safari)で開いてください', url)
+  }
+}
 
 // 🔵 Googleログイン処理
 const loginWithGoogle = async () => {
@@ -73,19 +96,14 @@ const loginWithGoogle = async () => {
   message.value = ''
 
   try {
-    const provider = new GoogleAuthProvider()
-
-    // A. LINEアプリ内 -> 外部ブラウザへ
+    // A. LINEアプリ内なら強制的に外部ブラウザへ誘導
     if (isLineApp.value) {
-      // LIFFが使えれば使う、だめならwindow.open
-      if (liff.id) {
-        await liff.openWindow({ url: window.location.href, external: true })
-      } else {
-        window.open(window.location.href, '_system')
-      }
+      await openExternalBrowser()
       loading.value = false
       return
     }
+
+    const provider = new GoogleAuthProvider()
 
     // B. ローカル (localhost) -> ポップアップ
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
@@ -119,11 +137,7 @@ const handleAuth = async () => {
     }
   } catch (error: any) {
     console.error(error)
-    if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
-    else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') message.value = '電話番号またはパスワードが違います'
-    else if (error.code === 'auth/email-already-in-use') message.value = 'この電話番号は既に登録されています'
-    else if (error.code === 'auth/weak-password') message.value = 'パスワードは6文字以上で設定してください'
-    else message.value = `エラー: ${error.message}`
+    message.value = `エラー: ${error.message}`
   } finally {
     loading.value = false
   }
@@ -139,9 +153,14 @@ const handleAuth = async () => {
     <div class="social-login">
       <button class="google-btn" @click="loginWithGoogle" :disabled="loading">
         <span class="g-icon">G</span>
-        <span v-if="isLineApp">ブラウザを開いてGoogleログイン</span>
+        <span v-if="isLineApp">外部ブラウザでGoogleログイン</span>
         <span v-else>Googleでログイン</span>
       </button>
+
+      <div v-if="isLineApp" class="sub-action">
+        <p class="hint-text">※うまく開かない場合はこちら↓</p>
+        <button class="link-btn" @click="openExternalBrowser">ブラウザ起動</button>
+      </div>
     </div>
 
     <div class="divider"><span>または 電話番号</span></div>
@@ -168,6 +187,13 @@ const handleAuth = async () => {
         {{ isLoginMode ? '新規登録' : 'ログイン' }}
       </a>
     </p>
+
+    <div class="debug-info">
+      <details>
+        <summary>デバッグ情報</summary>
+        <pre>{{ debugInfo }}</pre>
+      </details>
+    </div>
 
     <div class="dev-tools">
       <p class="dev-label">開発用ツール</p>
@@ -343,5 +369,37 @@ input {
 
 .seed-btn:hover {
   background: #444;
+}
+
+/* デバッグ用 */
+.debug-info {
+  margin-top: 1rem;
+  font-size: 0.7rem;
+  color: #666;
+  background: #eee;
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.sub-action {
+  text-align: center;
+  margin-top: 0.5rem;
+}
+
+.hint-text {
+  font-size: 0.8rem;
+  color: #e67e22;
+  margin-bottom: 0.2rem;
+}
+
+.link-btn {
+  background: none;
+  border: 1px solid #3498db;
+  color: #3498db;
+  padding: 0.3rem 0.8rem;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.8rem;
 }
 </style>
