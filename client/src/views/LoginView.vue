@@ -9,12 +9,10 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  setPersistence,     // 👈 追加
-  browserLocalPersistence // 👈 追加
+  User
 } from 'firebase/auth'
-import { doc, setDoc, Timestamp } from 'firebase/firestore'
+import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore'
 import liff from '@line/liff'
-// import { seedDatabase } from '../lib/seed' // 開発ツールは不要なら削除
 
 const router = useRouter()
 
@@ -29,16 +27,42 @@ const isLineApp = ref(false)
 const PSEUDO_DOMAIN = '@local.booking-system'
 const LINE_DOMAIN = '@line.booking-system'
 
+// 🟢 顧客データの自動作成 (新規登録時)
+const createCustomerData = async (user: User, provider: 'google' | 'line' | 'phone', name?: string) => {
+  try {
+    const docRef = doc(db, 'customers', user.uid)
+    const docSnap = await getDoc(docRef)
+
+    if (!docSnap.exists()) {
+      // データがない = 新規ユーザーなので作成
+      await setDoc(docRef, {
+        name_kana: name || user.displayName || 'ゲスト', // Google/LINEの名前を使用
+        phone_number: provider === 'phone' ? user.email?.split('@')[0] : '', // 電話ログイン以外は空
+        email: user.email || '',
+        is_existing_customer: false, // 新規扱い
+        preferred_category: 'barber', // デフォルト
+        provider: provider,
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now()
+      })
+      console.log('新規顧客データを作成しました')
+    }
+  } catch (e) {
+    console.error('顧客データ作成エラー:', e)
+  }
+}
+
 onMounted(async () => {
   // 1. LINEアプリ判定
   if (/Line/i.test(navigator.userAgent)) {
     isLineApp.value = true
   }
 
-  // 2. Googleリダイレクト復帰チェック (ブラウザ用)
+  // 2. Googleリダイレクト復帰チェック
   try {
     const result = await getRedirectResult(auth)
     if (result) {
+      await createCustomerData(result.user, 'google')
       router.push('/')
       return
     }
@@ -64,7 +88,7 @@ onMounted(async () => {
   }
 })
 
-// 🟢 LINEアカウントでログイン (LIFF専用: 擬似アカウント)
+// 🟢 LINEアカウントでログイン (LIFF専用)
 const loginWithLine = async () => {
   if (!liff.isLoggedIn()) {
     liff.login()
@@ -75,42 +99,33 @@ const loginWithLine = async () => {
   message.value = 'LINEアカウントを確認中...'
 
   try {
-    // 🔒 まず永続化設定を強制する
-    await setPersistence(auth, browserLocalPersistence)
-
-    // LINEユーザー情報取得
     const profile = await liff.getProfile()
     const lineUserId = profile.userId
     const lineName = profile.displayName
 
-    // 擬似メールアドレス/パスワード生成
+    // 擬似アカウント情報
     const firebaseEmail = `line_${lineUserId}${LINE_DOMAIN}`
-    const firebasePassword = `line_pass_${lineUserId}` // ユーザーには見せない固定パスワード
+    const firebasePassword = `line_pass_${lineUserId}`
+
+    let user: User
 
     try {
-      // A. 既存ユーザーとしてログイン
-      await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
+      // ログイン試行
+      const userCredential = await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
+      user = userCredential.user
     } catch (error: any) {
-      // B. ユーザーがいなければ新規登録
+      // ユーザーがいなければ新規登録
       if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
         const userCredential = await createUserWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
-
-        // 顧客データを作成
-        await setDoc(doc(db, 'customers', userCredential.user.uid), {
-          name_kana: lineName, // 仮の名前としてLINE名を入れる
-          phone_number: '',    // 電話番号は後で設定
-          line_user_id: lineUserId,
-          is_existing_customer: false,
-          preferred_category: 'barber',
-          created_at: Timestamp.now(),
-          updated_at: Timestamp.now()
-        })
+        user = userCredential.user
       } else {
         throw error
       }
     }
 
-    // ログイン成功
+    // 顧客データ確認・作成
+    await createCustomerData(user, 'line', lineName)
+
     router.push('/')
 
   } catch (error: any) {
@@ -120,15 +135,17 @@ const loginWithLine = async () => {
   }
 }
 
-// 🔵 Googleログイン処理 (ブラウザ用)
+// 🔵 Googleログイン処理
 const loginWithGoogle = async () => {
   loading.value = true
+  message.value = ''
   try {
-    await setPersistence(auth, browserLocalPersistence)
     const provider = new GoogleAuthProvider()
 
+    // PC(localhost)ならポップアップ、スマホならリダイレクト
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-      await signInWithPopup(auth, provider)
+      const result = await signInWithPopup(auth, provider)
+      await createCustomerData(result.user, 'google')
       router.push('/')
     } else {
       await signInWithRedirect(auth, provider)
@@ -140,25 +157,35 @@ const loginWithGoogle = async () => {
   }
 }
 
-// 📞 電話番号認証処理 (共通)
+// 📞 電話番号認証処理
 const handleAuth = async () => {
   loading.value = true
   message.value = ''
   try {
-    await setPersistence(auth, browserLocalPersistence)
     const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
+    let user: User
 
     if (isLoginMode.value) {
-      await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
-      router.push('/')
+      const userCredential = await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
+      user = userCredential.user
     } else {
-      await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
-      message.value = '登録完了'
-      router.push('/')
+      const userCredential = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
+      user = userCredential.user
     }
+
+    // 顧客データ確認・作成
+    await createCustomerData(user, 'phone')
+
+    router.push('/')
   } catch (error: any) {
-    // エラーハンドリング (省略)
-    message.value = `エラー: ${error.message}`
+    console.error(error)
+    // エラーメッセージの日本語化
+    if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
+    else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') message.value = '電話番号またはパスワードが違います'
+    else if (error.code === 'auth/email-already-in-use') message.value = 'この電話番号は既に登録されています'
+    else if (error.code === 'auth/weak-password') message.value = 'パスワードは6文字以上で設定してください'
+    else message.value = `エラー: ${error.message}`
+  } finally {
     loading.value = false
   }
 }
@@ -208,7 +235,6 @@ const handleAuth = async () => {
 </template>
 
 <style scoped>
-/* (スタイルは変更なし) */
 .auth-container {
   max-width: 400px;
   margin: 2rem auto;
@@ -232,6 +258,36 @@ h2 {
 
 .social-login {
   margin-bottom: 1.5rem;
+}
+
+/* ボタン類のデザイン */
+.google-btn {
+  width: 100%;
+  background-color: #fff;
+  color: #757575;
+  border: 1px solid #ddd;
+  padding: 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: bold;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: background 0.2s;
+}
+
+.google-btn:hover {
+  background-color: #f8f9fa;
+}
+
+.g-icon {
+  font-weight: 900;
+  color: #4285F4;
+  font-family: sans-serif;
+  font-size: 1.2rem;
 }
 
 .line-login-btn {
@@ -258,35 +314,6 @@ h2 {
 
 .line-icon {
   font-weight: 900;
-  font-family: sans-serif;
-  font-size: 1.2rem;
-}
-
-.google-btn {
-  width: 100%;
-  background-color: #fff;
-  color: #757575;
-  border: 1px solid #ddd;
-  padding: 0.8rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1rem;
-  font-weight: bold;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  transition: background 0.2s;
-}
-
-.google-btn:hover {
-  background-color: #f8f9fa;
-}
-
-.g-icon {
-  font-weight: 900;
-  color: #4285F4;
   font-family: sans-serif;
   font-size: 1.2rem;
 }
