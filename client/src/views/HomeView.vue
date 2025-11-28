@@ -93,9 +93,9 @@ const checkCustomerStatus = async (user: any) => {
     const q = query(collection(db, 'customers'), where('phone_number', '==', phoneNumber))
     const snapshot = await getDocs(q)
     if (!snapshot.empty) {
-      const data = snapshot.docs[0].data()
+      const data = snapshot.docs[0]!.data()
       customerProfile.value = {
-        id: snapshot.docs[0].id,
+        id: snapshot.docs[0]!.id,
         name_kana: data.name_kana,
         is_existing_customer: data.is_existing_customer,
         preferred_category: data.preferred_category
@@ -145,8 +145,8 @@ const fetchAvailableSlots = async () => {
     const snapshot = await getDocs(q)
     const busySlots = snapshot.docs.map(doc => doc.data()).filter(d => d.status !== 'cancelled').map(d => ({ start: d.start_at.toDate().getTime(), end: d.end_at.toDate().getTime() }))
 
-    const openTime = parseInt(shopConfig.value.business_hours.start.split(':')[0], 10)
-    const closeTime = parseInt(shopConfig.value.business_hours.end.split(':')[0], 10)
+    const openTime = parseInt(shopConfig.value.business_hours.start.split(':')[0]!, 10)
+    const closeTime = parseInt(shopConfig.value.business_hours.end.split(':')[0]!, 10)
     const interval = shopConfig.value.time_slot_interval || 30
     const requiredDuration = totalDuration.value
     let current = new Date(targetDate); current.setHours(openTime, 0, 0, 0)
@@ -167,7 +167,7 @@ watch([reservationDate, selectedStaffId, selectedMenus], () => { fetchAvailableS
 
 const openBookingModal = () => {
   if (selectedMenus.value.length === 0) return dialog.alert('メニューを選択してください')
-  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0].id; else selectedStaffId.value = ''
+  if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0]!.id; else selectedStaffId.value = ''
   const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
   reservationDate.value = now.toISOString().slice(0, 16)
   customerNote.value = ''; showModal.value = true; fetchAvailableSlots()

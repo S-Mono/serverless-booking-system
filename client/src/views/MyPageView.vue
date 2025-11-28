@@ -44,7 +44,7 @@ const fetchReservations = async (userId: string) => {
         const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
         const custSnap = await getDocs(custQ)
         if (!custSnap.empty) {
-          const data = custSnap.docs[0].data()
+          const data = custSnap.docs[0]!.data()
           nameKana.value = data.name_kana
           preferredCategory.value = data.preferred_category || 'barber'
         }

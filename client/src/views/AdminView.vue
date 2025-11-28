@@ -13,7 +13,7 @@ interface Reservation {
   id: string; start_at: Timestamp; end_at: Timestamp; staff_id: string
   customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number }[]; status: string; source?: 'web' | 'phone'; note?: string
 }
-interface Menu { id: string; title: string; duration_min: number }
+interface Menu { id: string; title: string; duration_min: number; price: number }
 interface ShopConfig { holiday_weekdays: number[]; closed_dates: string[]; business_hours: { start: string; end: string }; tax_rate: number }
 
 const staffs = ref<Staff[]>([])
@@ -98,8 +98,8 @@ const initData = async (fetchMaster = true) => {
           tax_rate: data.tax_rate ?? 10
         }
         const hours = shopConfig.value.business_hours
-        if (hours?.start) openHour.value = parseInt(hours.start.split(':')[0], 10)
-        if (hours?.end) closeHour.value = parseInt(hours.end.split(':')[0], 10)
+        if (hours?.start) openHour.value = parseInt(hours.start.split(':')[0]!, 10)
+        if (hours?.end) closeHour.value = parseInt(hours.end.split(':')[0]!, 10)
       }
     }
 
