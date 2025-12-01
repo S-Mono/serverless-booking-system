@@ -8,8 +8,7 @@ import AdminMenuSettingsView from '../views/AdminMenuSettingsView.vue'
 import AdminLoginView from '../views/AdminLoginView.vue'
 import { auth } from '../lib/firebase'
 
-// 環境変数から鍵を取得
-const ADMIN_KEY = import.meta.env.VITE_ADMIN_KEY
+// 管理キーはクライアント側に置かない（Firebase 管理者クレームで管理）
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -75,30 +74,9 @@ const router = createRouter({
 
 // 🔒 ナビゲーションガード (門番)
 router.beforeEach(async (to, from, next) => {
-  // 1. URLパラメータによる「隠し扉」チェック
-  // '/admin' で始まるパスにアクセスする場合
-  if (to.path.startsWith('/admin')) {
-    const queryKey = to.query.key
-    const savedKey = sessionStorage.getItem('adminKeyVerified')
-
-    // A. URLに正しいキーがついている場合 -> 通過＆記憶
-    if (queryKey === ADMIN_KEY) {
-      sessionStorage.setItem('adminKeyVerified', 'true')
-    }
-    // B. URLにキーがないが、記憶（セッション）にある場合 -> 通過
-    else if (savedKey === 'true') {
-      // OK (何もしない)
-    }
-    // C. どちらもない場合 -> トップページへ強制送還
-    else {
-      console.warn('不正なアクセス: キーがありません')
-      return next('/')
-    }
-  }
-
-  // 2. 認証チェック (requiresAdmin)
+  // requiresAdmin がついているページは Firebase の管理者クレームを確認する
   if (to.meta.requiresAdmin) {
-    // Firebaseの初期化待ち
+    // Firebase の初期化完了を待ち、現在のユーザーを取得
     await new Promise<void>(resolve => {
       const unsubscribe = auth.onAuthStateChanged(() => {
         unsubscribe()
@@ -107,10 +85,23 @@ router.beforeEach(async (to, from, next) => {
     })
 
     const user = auth.currentUser
-    // ログインしていない場合は、管理者ログイン画面へ
-    // (ログイン画面にもキーが必要なので付与してリダイレクト)
+    // 未ログインなら管理者ログイン画面へ
     if (!user) {
-      return next(`/admin-login?key=${ADMIN_KEY}`)
+      return next('/admin-login')
+    }
+
+    // トークンのカスタムクレームに admin フラグがあるかを確認
+    try {
+      const { getIdTokenResult } = await import('firebase/auth')
+      const idTokenResult = await getIdTokenResult(user)
+      if (!idTokenResult.claims || !idTokenResult.claims.admin) {
+        // 管理者権限がないならアクセス拒否
+        console.warn('管理者権限がありません')
+        return next('/admin-login')
+      }
+    } catch (err) {
+      console.error('管理権限確認エラー', err)
+      return next('/admin-login')
     }
   }
 

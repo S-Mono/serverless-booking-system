@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { db } from '../lib/firebase'
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc, writeBatch, query, where } from 'firebase/firestore'
 import { useDialogStore } from '../stores/dialog'
+import { useUserStore } from '../stores/user'
 
 const dialog = useDialogStore()
 const router = useRouter()
@@ -67,13 +68,13 @@ const fetchData = async () => {
 }
 
 // ⚡ カテゴリ内全削除 (開発者用)
-const deleteCategoryMenus = async (catId: string, catLabel: string) => {
-  // 1. パスワード認証
-  const password = prompt(`「${catLabel}」のメニューを全て削除します。\n開発者用パスワードを入力してください`)
-  if (password === null) return
-  if (password !== 'rukario1109') return dialog.alert('パスワードが違います', 'エラー')
+const userStore = useUserStore()
 
-  // 2. 最終確認
+const deleteCategoryMenus = async (catId: string, catLabel: string) => {
+  // 管理者権限チェック
+  if (!userStore.isAdmin) return dialog.alert('管理者権限が必要です', 'エラー')
+
+  // 最終確認
   const ok = await dialog.confirm(`本当に「${catLabel}」内のメニューを全て削除しますか？\nこの操作は取り消せません。`, '完全削除の確認', 'danger')
   if (!ok) return
 

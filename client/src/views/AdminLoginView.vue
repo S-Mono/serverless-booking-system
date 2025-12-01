@@ -16,9 +16,14 @@ const handleLogin = async () => {
   errorMsg.value = ''
   try {
     await signInWithEmailAndPassword(auth, email.value, password.value)
-    // ログイン成功したら、URLのkeyパラメータを維持したままダッシュボードへ
-    const key = route.query.key
-    router.push(`/admin?key=${key}`)
+    // ログイン成功後、IDトークンのカスタムクレームに admin があるか確認して遷移
+    const { getIdTokenResult } = await import('firebase/auth')
+    const idTokenResult = await getIdTokenResult(auth.currentUser!)
+    if (idTokenResult.claims && idTokenResult.claims.admin) {
+      router.push('/admin')
+    } else {
+      errorMsg.value = 'このアカウントには管理者権限がありません'
+    }
   } catch (e: any) {
     console.error(e)
     errorMsg.value = 'ログインに失敗しました。'

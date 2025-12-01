@@ -39,4 +39,17 @@ npm run dev
 
 ```sh
 npm run build
+
+## Admin access / developer accounts
+
+This project no longer uses a client-side admin key. Administrative routes (/admin/*) are protected by Firebase Authentication custom claims.
+
+- To grant admin rights to a Firebase user you must set the `admin` custom claim for that user using Firebase Admin SDK or Cloud Function.
+- Example (Node.js, using firebase-admin):
+
+```js
+await admin.auth().setCustomUserClaims('USER_UID', { admin: true })
+```
+
+After a user logs in, the client checks the ID token's claims. If `admin: true` is present the user can access admin routes. This avoids secrets in client code or env files.
 ```

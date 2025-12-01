@@ -5,6 +5,7 @@ import { db } from '../lib/firebase'
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
 import { seedDatabase } from '../lib/seed'
 import { useDialogStore } from '../stores/dialog'
+import { useUserStore } from '../stores/user'
 
 const dialog = useDialogStore()
 const router = useRouter()
@@ -112,17 +113,14 @@ const removeStaff = async (id: string) => {
   }
 }
 
+const userStore = useUserStore()
+
 const handleSeed = async () => {
-  const password = prompt('開発者用パスワードを入力してください')
-  if (password === null) return
-  if (password === 'rukario1109') {
-    const ok = await dialog.confirm('現在のデータがすべて消去され、初期状態に戻ります。\n本当によろしいですか？', '警告', 'danger')
-    if (ok) {
-      await seedDatabase()
-      fetchData()
-    }
-  } else {
-    dialog.alert('パスワードが違います')
+  if (!userStore.isAdmin) return dialog.alert('管理者権限が必要です', 'エラー')
+  const ok = await dialog.confirm('現在のデータがすべて消去され、初期状態に戻ります。\n本当によろしいですか？', '警告', 'danger')
+  if (ok) {
+    await seedDatabase()
+    fetchData()
   }
 }
 const goBack = () => router.push('/admin')
