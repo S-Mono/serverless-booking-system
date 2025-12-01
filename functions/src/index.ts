@@ -82,7 +82,14 @@ export const onReservationCreated = onDocumentCreated(
         },
       },
       // provide fallback to the data payload for clients that read data
-      data: clickAction ? {link: String(clickAction)} : undefined,
+      // include reservationId so clients can deduplicate notifications
+      data: ((): { [key: string]: string } => {
+        const dataPayload: { [key: string]: string } = {
+          reservationId: String(snap.id || ""),
+        };
+        if (clickAction) dataPayload.link = String(clickAction);
+        return dataPayload;
+      })(),
     };
     logger.info("Prepared multicast message", {
       tokenCount: tokens.length,

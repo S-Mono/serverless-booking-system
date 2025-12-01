@@ -121,6 +121,18 @@ const playChime = async () => {
 // onMessage の解除関数を保持する（initData が複数回呼ばれても一度だけ登録する）
 let unregisterFcmOnMessage: (() => void) | null = null
 
+// 最近通知済み ID を一時的に記録して重複通知を抑止する
+const recentNotified = new Map<string, number>()
+const NOTIFY_TTL_MS = 60 * 1000
+const addRecentlyNotified = (id: string) => {
+  try {
+    recentNotified.set(id, Date.now() + NOTIFY_TTL_MS)
+    // schedule cleanup
+    setTimeout(() => { if ((recentNotified.get(id) || 0) <= Date.now()) recentNotified.delete(id) }, NOTIFY_TTL_MS + 500)
+  } catch (_) { /* ignore */ }
+}
+const isRecentlyNotified = (id?: string) => { if (!id) return false; const t = recentNotified.get(id); return !!t && t > Date.now() }
+
 // フォールバック: WebAudio を使って短いビープを鳴らす（mp3 が取得できない or 再生がブロックされた場合）
 const playFallbackBeep = () => {
   try {
@@ -213,6 +225,12 @@ const initData = async (fetchMaster = true) => {
 
             // 🔴 修正: 通知がONのときだけ実行する条件を追加
             if (isNotifyEnabled.value) {
+              // avoid duplicates when FCM also delivers the same reservation
+              const rId = change.doc.id
+              if (isRecentlyNotified(rId)) {
+                console.log('Skip snapshot notification (already recently notified):', rId)
+                return
+              }
 
               // 🎵 音を鳴らす（可能なら WebAudio バッファを使用）
               playChime().then(() => console.log('チャイム再生成功')).catch(e => {
@@ -229,6 +247,8 @@ const initData = async (fetchMaster = true) => {
                 `${data.customer_name}様から新規予約があります！\n\n担当: ${staffName}\n時間: ${timeStr}\nメニュー: ${menuName}`,
                 '🎉 新着予約'
               );
+              // mark as notified so a following FCM message won't duplicate
+              addRecentlyNotified(rId)
             }
           }
         }
@@ -639,6 +659,13 @@ onMounted(() => {
       try {
         const title = payload.notification?.title || payload.data?.title
         const body = payload.notification?.body || payload.data?.body
+        // dedupe: if payload contains reservationId and it's recently handled, skip
+        const reservationId = payload?.data?.reservationId || payload?.data?.reservation_id
+        if (reservationId && isRecentlyNotified(reservationId)) {
+          console.log('Skipping duplicate notification for', reservationId)
+          return
+        }
+
         if (title || body) {
           playChime().then(() => console.log('チャイム再生成功 (fcm)')).catch(e => {
             console.warn('チャイム再生失敗 (fcm)', e)
@@ -646,6 +673,7 @@ onMounted(() => {
           })
 
           dialog.alert(body || '', title || 'お知らせ')
+          if (reservationId) addRecentlyNotified(reservationId)
         }
       } catch (e) {
         console.error('Foreground message processing failed', e)
