@@ -22,17 +22,23 @@ interface Menu { id: string; title: string; duration_min: number; price: number 
 interface ShopConfig { holiday_weekdays: number[]; closed_dates: string[]; business_hours: { start: string; end: string }; tax_rate: number }
 
 const staffs = ref<Staff[]>([])
-const reservations = ref<Reservation[]>([])
+// reservations for the left-side list (from selectedDate onward)
+const listReservations = ref<Reservation[]>([])
+// reservations for the right-side timeline (only the selectedDate)
+const dayReservations = ref<Reservation[]>([])
 const menus = ref<Menu[]>([])
 const shopConfig = ref<ShopConfig>({ holiday_weekdays: [], closed_dates: [], business_hours: { start: '09:00', end: '19:00' }, tax_rate: 10 })
 const loading = ref(true)
+// how many days to include in left-list window (from selectedDate 00:00)
+const listWindowDays = ref(30)
 
 const isSidebarOpen = ref(true)
 const selectedDate = ref(new Date())
 const openHour = ref(9)
 const closeHour = ref(19)
 
-let unsubscribe: Unsubscribe | null = null
+let unsubscribeList: Unsubscribe | null = null
+let unsubscribeDay: Unsubscribe | null = null
 
 const isDragging = ref(false)
 const dragStaffId = ref<string | null>(null)
@@ -54,8 +60,64 @@ const newReservation = ref({
   staff_id: '', start_time: '', customer_name: '', customer_phone: '', menu_id: '', note: ''
 })
 
-// 共有の Audio インスタンス（プリロード用）
+// 共有の Audio インスタンス（フォールバック用）
 const notificationSound = new Audio('/sounds/Chime-Announce05-3.mp3');
+
+// WebAudio を使ったプリロード（より低遅延での再生を狙う）
+let audioCtx: (AudioContext | null) = null
+let chimeBuffer: AudioBuffer | null = null
+
+const ensureAudioContext = () => {
+  if (!audioCtx) {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext
+    if (Ctx) audioCtx = new Ctx()
+  }
+}
+
+const preloadChime = async () => {
+  try {
+    ensureAudioContext()
+    // fetch with cache and decode into buffer
+    const r = await fetch('/sounds/Chime-Announce05-3.mp3', { cache: 'force-cache' })
+    const buffer = await r.arrayBuffer()
+    if (!audioCtx) return
+    // decodeAudioData returns a promise in modern browsers
+    chimeBuffer = await audioCtx.decodeAudioData(buffer.slice(0))
+  } catch (e) {
+    // この時点ではフォールバックを残しておく
+    console.warn('chime preload failed', e)
+    chimeBuffer = null
+  }
+}
+
+// 再生関数: Buffer があれば WebAudio を使い、なければ Audio element を使う
+const playChime = async () => {
+  try {
+    if (audioCtx && chimeBuffer) {
+      if (audioCtx.state === 'suspended') {
+        // resume してから再生
+        try { await audioCtx.resume() } catch (_) { /* ignore */ }
+      }
+      const src = audioCtx.createBufferSource()
+      src.buffer = chimeBuffer
+      src.connect(audioCtx.destination)
+      src.start()
+      return
+    }
+
+    // フォールバック：Audio element を使う
+    try {
+      await notificationSound.play()
+      // すぐ止めないで自然に鳴らす（短い音なのでOK）。
+    } catch (e) {
+      console.warn('Audio element play failed', e)
+      playFallbackBeep()
+    }
+  } catch (e) {
+    console.error('playChime failed', e)
+    playFallbackBeep()
+  }
+}
 // onMessage の解除関数を保持する（initData が複数回呼ばれても一度だけ登録する）
 let unregisterFcmOnMessage: (() => void) | null = null
 
@@ -134,11 +196,12 @@ const initData = async (fetchMaster = true) => {
 
     const startOfDay = new Date(selectedDate.value); startOfDay.setHours(0, 0, 0, 0)
     const endOfDay = new Date(selectedDate.value); endOfDay.setDate(endOfDay.getDate() + 1); endOfDay.setHours(0, 0, 0, 0)
-    // notificationSound はモジュールスコープの共有インスタンスを使う
-    if (unsubscribe) unsubscribe()
-    const q = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
-    unsubscribe = onSnapshot(q, (snapshot) => {
-      reservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+
+    // 1) timeline query: only reservations for selected date (existing behaviour)
+    if (unsubscribeDay) unsubscribeDay()
+    const qDay = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
+    unsubscribeDay = onSnapshot(qDay, (snapshot) => {
+      dayReservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const data = change.doc.data();
@@ -151,14 +214,11 @@ const initData = async (fetchMaster = true) => {
             // 🔴 修正: 通知がONのときだけ実行する条件を追加
             if (isNotifyEnabled.value) {
 
-              // 🎵 音を鳴らす（共有インスタンスを再利用）
-              notificationSound.play()
-                .then(() => console.log('チャイム再生成功'))
-                .catch(e => {
-                  console.warn('チャイム再生ブロック', e)
-                  // mp3 のロードや再生が何らかの理由で失敗したら WebAudio フォールバック
-                  playFallbackBeep()
-                });
+              // 🎵 音を鳴らす（可能なら WebAudio バッファを使用）
+              playChime().then(() => console.log('チャイム再生成功')).catch(e => {
+                console.warn('チャイム再生ブロック', e)
+                playFallbackBeep()
+              })
 
               // ✨ ダイアログ表示
               const timeStr = `${formatTime(data.start_at)} - ${formatTime(data.end_at)}`;
@@ -174,6 +234,15 @@ const initData = async (fetchMaster = true) => {
         }
       })
       loading.value = false
+    })
+
+    // 2) list query: show reservations from selectedDate (00:00) up to listWindowDays
+    if (unsubscribeList) unsubscribeList()
+    const windowEnd = new Date(startOfDay);
+    windowEnd.setDate(windowEnd.getDate() + listWindowDays.value)
+    const qList = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(windowEnd)), orderBy('start_at', 'asc'))
+    unsubscribeList = onSnapshot(qList, (snapshot) => {
+      listReservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
     })
 
     // Note: Foreground FCM handler is registered once in onMounted lifecycle
@@ -219,7 +288,7 @@ const requestNotificationPermission = async () => {
     console.log('requestNotificationPermission - Notification.permission:', permission)
     if (permission === 'granted') {
       const token = await getToken(messaging, { vapidKey: VAPID_KEY })
-      console.log('requestNotificationPermission - getToken returned:', token)
+      //console.log('requestNotificationPermission - getToken returned:', token)
       if (token) {
         await setDoc(doc(db, 'admin_tokens', token), {
           token: token,
@@ -234,17 +303,41 @@ const requestNotificationPermission = async () => {
         // このタイミングで一度音を再生しておくと、今後の非同期通知再生で
         // ブラウザの自動再生制限に引っかかりにくくなります。
         try {
-          // 既に作成した共有インスタンスを使ってプリロード（ユーザー操作の文脈で再生）
-          await notificationSound.play()
-          // 再生が成功した場合は即停止
-          notificationSound.pause()
-          notificationSound.currentTime = 0
-          console.log('通知用サウンドのプリロードに成功')
+          // ユーザー操作の文脈なので WebAudio の resume とプリロード済みバッファの短再生を試みる
+          ensureAudioContext()
+          if (audioCtx) {
+            try { await audioCtx.resume() } catch (_) { /* ignore */ }
+            if (!chimeBuffer) await preloadChime()
+            if (chimeBuffer) {
+              try {
+                // ごく短い・ほぼ無音レベルで再生して「ユーザー操作」を満たす
+                const src = audioCtx.createBufferSource()
+                const g = audioCtx.createGain()
+                g.gain.value = 0.0001
+                src.buffer = chimeBuffer
+                src.connect(g)
+                g.connect(audioCtx.destination)
+                src.start()
+                setTimeout(() => { try { src.stop() } catch (_) { } }, 120)
+                console.log('通知用サウンドをWebAudioでプリロード/プライムしました')
+              } catch (e) {
+                console.warn('WebAudio test playback failed', e)
+              }
+            } else {
+              // バッファがない場合は Audio element を使って短く鳴らす
+              try {
+                await notificationSound.play()
+                notificationSound.pause()
+                notificationSound.currentTime = 0
+                console.log('通知用サウンド（Audio element）でプリロードに成功')
+              } catch (e) {
+                console.warn('通知サウンドのプリロードがブロックされました', e)
+                try { playFallbackBeep() } catch (_) { /* ignore */ }
+              }
+            }
+          }
         } catch (e) {
-          // 再生がブロックされても問題ない。ログだけ残す。
-          console.warn('通知サウンドのプリロードがブロックされました', e)
-          // 代替で WebAudio を鳴らしてユーザーにフィードバックを与える
-          try { playFallbackBeep() } catch (_) { /* ignore */ }
+          console.warn('notification prime failed', e)
         }
       }
     } else {
@@ -482,10 +575,61 @@ const calendarDays = computed(() => {
   }
   return days
 })
+
+// helper: compare two Date objects by date only (ignore time)
+const isSameDateOnly = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+
+// group left-side list by date and put selectedDate group first
+const groupedByDate = computed(() => {
+  const groups: Record<string, Reservation[]> = {}
+  listReservations.value.forEach(r => {
+    const d = r.start_at.toDate()
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    if (!groups[key]) groups[key] = []
+    groups[key].push(r)
+  })
+
+  // sort reservations in each group by start time
+  for (const k in groups) {
+    groups[k]!.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
+  }
+
+  // order keys ascending (parse YYYY-MM-DD to local Date safely)
+  const parseKeyToDate = (k: string) => {
+    const parts = k.split('-')
+    const y = Number(parts[0] || 0)
+    const m = Number(parts[1] || 1)
+    const d = Number(parts[2] || 1)
+    return new Date(y, m - 1, d)
+  }
+  const keys = Object.keys(groups).sort((a, b) => parseKeyToDate(a).getTime() - parseKeyToDate(b).getTime())
+
+  // ensure selectedDate group always shows at top (even if empty)
+  const sel = new Date(selectedDate.value); sel.setHours(0, 0, 0, 0)
+  const selKey = `${sel.getFullYear()}-${String(sel.getMonth() + 1).padStart(2, '0')}-${String(sel.getDate()).padStart(2, '0')}`
+  if (!groups[selKey]) groups[selKey] = []
+  const result: { key: string; date: Date; items: Reservation[] }[] = []
+  // push selected date (now guaranteed to exist) first
+  result.push({ key: selKey, date: parseKeyToDate(selKey), items: groups[selKey] })
+  keys.forEach(k => {
+    if (k === selKey) return
+    result.push({ key: k, date: parseKeyToDate(k), items: groups[k] || [] })
+  })
+
+  return result
+})
 const selectCalendarDate = (day: any) => { if (!day.isCurrentMonth) return; const newDate = new Date(selectedDate.value); newDate.setDate(day.day); selectedDate.value = newDate }
+
+// load more days into the left-list window (incrementally)
+const loadMoreDays = (days = 30) => {
+  listWindowDays.value += days
+  initData(false)
+}
 
 onMounted(() => {
   initData()
+  // try to preload the chime buffer for lower-latency playback
+  preloadChime()
 
   // Register a single foreground onMessage handler for FCM so admin sees alerts
   // even when they're viewing a different date. Keep unregister function in module scope.
@@ -496,12 +640,10 @@ onMounted(() => {
         const title = payload.notification?.title || payload.data?.title
         const body = payload.notification?.body || payload.data?.body
         if (title || body) {
-          notificationSound.play()
-            .then(() => console.log('チャイム再生成功 (fcm)'))
-            .catch(e => {
-              console.warn('チャイム再生ブロック (fcm)', e)
-              playFallbackBeep()
-            })
+          playChime().then(() => console.log('チャイム再生成功 (fcm)')).catch(e => {
+            console.warn('チャイム再生失敗 (fcm)', e)
+            playFallbackBeep()
+          })
 
           dialog.alert(body || '', title || 'お知らせ')
         }
@@ -519,7 +661,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  try { if (unsubscribe) unsubscribe() } catch (_) { }
+  try { if (unsubscribeDay) unsubscribeDay() } catch (_) { }
+  try { if (unsubscribeList) unsubscribeList() } catch (_) { }
   try { if (unregisterFcmOnMessage) unregisterFcmOnMessage() } catch (_) { }
 })
 </script>
@@ -547,7 +690,11 @@ onUnmounted(() => {
       <div class="panel-left" :class="{ collapsed: !isSidebarOpen }">
         <div class="panel-header">
           <template v-if="isSidebarOpen">
-            <h3>予約リスト</h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h3 style="margin:0">予約リスト</h3>
+              <button class="today-btn" style="padding:0.25rem 0.6rem;font-size:0.8rem;height:auto;"
+                @click="selectedDate = new Date()">📅 本日の予約</button>
+            </div>
             <button class="toggle-btn" @click="isSidebarOpen = false" title="閉じる">◀</button>
           </template>
           <div v-else class="collapsed-content" @click="isSidebarOpen = true">
@@ -557,27 +704,44 @@ onUnmounted(() => {
         </div>
         <div v-if="isSidebarOpen" class="kanban-list-container">
           <div class="kanban-list">
-            <transition-group name="list">
-              <div v-for="res in reservations" :key="res.id" class="kanban-card" :class="getReservationClass(res)"
-                @click="openReservationDetail(res)">
-                <div class="card-left">
-                  <div class="time-box">
-                    <span class="time">{{ formatTime(res.start_at) }}</span>
-                    <span v-if="res.status === 'pending'" class="status-icon-pending">未</span>
-                    <span v-else class="source-icon">{{ res.source === 'phone' ? '📞' : '🌐' }}</span>
-                  </div>
-                </div>
-                <div class="details">
-                  <div class="menu-title">{{ res.menu_items[0]?.title }}</div>
-                  <div class="customer-info">
-                    <div v-if="res.customer_name" class="c-row"><span class="icon">👤</span> {{ res.customer_name }}
+            <div v-for="group in groupedByDate" :key="group.key" class="date-group">
+              <div class="date-group-header" :class="{ 'selected-group': isSameDateOnly(group.date, selectedDate) }">{{
+                formatDateJP(group.date) }}</div>
+              <transition-group name="list">
+                <div v-for="res in group.items" :key="res.id" class="kanban-card" :class="getReservationClass(res)"
+                  @click="openReservationDetail(res)">
+                  <div class="card-left">
+                    <div class="time-box">
+                      <span class="time">{{ formatTime(res.start_at) }}<span
+                          v-if="!isSameDateOnly(res.start_at.toDate(), selectedDate)"
+                          style="font-size:0.7rem;color:#666;margin-left:6px">{{ formatDate(res.start_at)
+                          }}</span></span>
+                      <span v-if="res.status === 'pending'" class="status-icon-pending">未</span>
+                      <span v-else class="source-icon">{{ res.source === 'phone' ? '📞' : '🌐' }}</span>
                     </div>
                   </div>
-                  <div class="staff-badge">担当: {{ getStaffName(res.staff_id) }}</div>
+                  <div class="details">
+                    <div class="menu-title">{{ res.menu_items[0]?.title }}</div>
+                    <div class="customer-info">
+                      <div v-if="res.customer_name" class="c-row"><span class="icon">👤</span> {{ res.customer_name }}
+                      </div>
+                    </div>
+                    <div class="staff-badge">担当: {{ getStaffName(res.staff_id) }}</div>
+                  </div>
                 </div>
+              </transition-group>
+              <p v-if="group.items.length === 0" style="margin-left:8px;color:#777;font-size:0.85rem">この日の予約はありません</p>
+            </div>
+            <div class="list-footer"
+              style="display:flex;align-items:center;justify-content:space-between;margin-top:0.5rem">
+              <div style="font-size:0.85rem;color:#666">表示期間: {{ selectedDate.toDateString() }} 〜
+                {{ new Date(new Date(selectedDate).getTime() + (listWindowDays * 24 * 3600 * 1000)).toDateString() }}
               </div>
-            </transition-group>
-            <p v-if="reservations.length === 0" class="no-data">予約はありません</p>
+              <div>
+                <button class="load-more-btn" @click="loadMoreDays(30)">さらに30日を読み込む</button>
+              </div>
+            </div>
+            <p v-if="groupedByDate.length === 0" class="no-data">予約はありません</p>
           </div>
         </div>
       </div>
@@ -616,7 +780,7 @@ onUnmounted(() => {
                   <div v-for="label in timeLabels" :key="label" class="grid-line"></div>
                 </div>
                 <transition-group name="fade">
-                  <template v-for="res in reservations" :key="res.id">
+                  <template v-for="res in dayReservations" :key="res.id">
                     <div v-if="res.staff_id === staff.id" class="reservation-bar" :class="getReservationClass(res)"
                       :style="{ left: `${getLeftPosition(res.start_at)}%`, width: `${getWidth(res.start_at, res.end_at)}%` }"
                       :title="getTooltipText(res)" @mousedown.stop @click.stop="openReservationDetail(res)">
@@ -908,6 +1072,42 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 0.5rem;
   width: 100%;
+}
+
+.date-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.date-group-header {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #2c3e50;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.8));
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-left: 3px solid #3498db;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
+}
+
+.date-group-header.selected-group {
+  background: linear-gradient(90deg, #eaf6ff, #ffffff);
+  border-left-color: #2f86d7;
+}
+
+.load-more-btn {
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  background: #3498db;
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.load-more-btn:hover {
+  opacity: 0.95
 }
 
 .no-data {
