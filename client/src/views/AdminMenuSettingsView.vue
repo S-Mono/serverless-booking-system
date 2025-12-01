@@ -2,21 +2,23 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { db } from '../lib/firebase'
-import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
+import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc, writeBatch, query, where } from 'firebase/firestore'
 import { useDialogStore } from '../stores/dialog'
 
 const dialog = useDialogStore()
 const router = useRouter()
 
-interface Staff { id: string; name: string }
+interface Staff { id: string; name: string; code?: string }
 interface Menu {
   id: string
   title: string
-  price: number // 税抜
+  price: number
+  price_with_tax: number
   duration_min: number
   available_staff_ids: string[]
   description?: string
   category: 'barber' | 'beauty' | 'chiro'
+  order_priority: number
 }
 
 const menus = ref<Menu[]>([])
@@ -27,24 +29,13 @@ const taxRate = ref(10)
 const showModal = ref(false)
 const isEditing = ref(false)
 const editTargetId = ref<string | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
 
-// 編集フォーム (税込価格も持たせる)
 const editForm = ref({
-  id: '',
-  title: '',
-  price: 0,       // 税抜
-  priceWithTax: 0, // 税込 (入力用)
-  duration_min: 30,
-  available_staff_ids: [] as string[],
-  description: '',
-  category: 'barber' as 'barber' | 'beauty' | 'chiro'
+  id: '', title: '', price: 0, priceWithTax: 0, duration_min: 30, available_staff_ids: [] as string[], description: '', category: 'barber' as 'barber' | 'beauty' | 'chiro', order_priority: 10
 })
 
-const categories = [
-  { id: 'barber', label: '💈 理容' },
-  { id: 'beauty', label: '💇‍♀️ 美容' },
-  { id: 'chiro', label: '💆‍♂️ カイロプラクティック' }
-]
+const categories = [{ id: 'barber', label: '💈 理容' }, { id: 'beauty', label: '💇‍♀️ 美容' }, { id: 'chiro', label: '💆‍♂️ カイロ' }]
 
 const menusByCategory = computed(() => {
   return {
@@ -54,21 +45,10 @@ const menusByCategory = computed(() => {
   }
 })
 
-// 💰 計算ロジック
-// 税抜 -> 税込
 const calcTaxIncluded = (price: number) => Math.ceil(price * (1 + taxRate.value / 100))
-// 税込 -> 税抜
 const calcTaxExcluded = (priceWithTax: number) => Math.ceil(priceWithTax / (1 + taxRate.value / 100))
-
-// 入力ハンドラ
-const updateInclusive = () => {
-  // 税抜が入力されたら税込を計算
-  editForm.value.priceWithTax = calcTaxIncluded(editForm.value.price)
-}
-const updateExclusive = () => {
-  // 税込が入力されたら税抜を計算
-  editForm.value.price = calcTaxExcluded(editForm.value.priceWithTax)
-}
+const updateInclusive = () => { editForm.value.priceWithTax = calcTaxIncluded(editForm.value.price) }
+const updateExclusive = () => { editForm.value.price = calcTaxExcluded(editForm.value.priceWithTax) }
 
 const fetchData = async () => {
   loading.value = true
@@ -78,78 +58,142 @@ const fetchData = async () => {
       getDocs(collection(db, 'staffs')),
       getDoc(doc(db, 'shop_config', 'default_config'))
     ])
-
-    menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Menu[]
+    menus.value = menuSnap.docs.map(doc => ({ id: doc.id, ...doc.data(), price_with_tax: doc.data().price_with_tax ?? Math.ceil(doc.data().price * 1.1), order_priority: doc.data().order_priority ?? 999 })).sort((a: any, b: any) => a.order_priority - b.order_priority) as Menu[]
     staffs.value = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Staff[]
-
     if (configSnap.exists()) {
-      const data = configSnap.data()
-      taxRate.value = data.tax_rate ?? 10
+      taxRate.value = configSnap.data().tax_rate ?? 10
     }
+  } catch (e) { console.error(e); dialog.alert('読み込みエラー') } finally { loading.value = false }
+}
+
+// ⚡ カテゴリ内全削除 (開発者用)
+const deleteCategoryMenus = async (catId: string, catLabel: string) => {
+  // 1. パスワード認証
+  const password = prompt(`「${catLabel}」のメニューを全て削除します。\n開発者用パスワードを入力してください`)
+  if (password === null) return
+  if (password !== 'rukario1109') return dialog.alert('パスワードが違います', 'エラー')
+
+  // 2. 最終確認
+  const ok = await dialog.confirm(`本当に「${catLabel}」内のメニューを全て削除しますか？\nこの操作は取り消せません。`, '完全削除の確認', 'danger')
+  if (!ok) return
+
+  loading.value = true
+  try {
+    // 3. 削除対象をクエリで取得
+    const q = query(collection(db, 'menus'), where('category', '==', catId))
+    const snapshot = await getDocs(q)
+
+    if (snapshot.empty) {
+      loading.value = false
+      return dialog.alert('削除対象のメニューがありません')
+    }
+
+    // 4. バッチ削除実行
+    const batch = writeBatch(db)
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref)
+    })
+    await batch.commit()
+
+    dialog.alert(`「${catLabel}」のメニューを削除しました`)
+    fetchData()
   } catch (e) {
-    console.error(e);
-    dialog.alert('読み込みエラー')
+    console.error(e)
+    dialog.alert('削除に失敗しました', 'エラー')
   } finally {
     loading.value = false
   }
+}
+
+// 📤 CSVインポート処理
+const triggerFileUpload = () => fileInput.value?.click()
+
+const importCsv = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  const ok = await dialog.confirm('CSVからメニューを取り込みますか？\n※既存の同名メニューは上書きされず、新規追加されます。', 'インポート確認')
+  if (!ok) { target.value = ''; return }
+
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    const text = e.target?.result as string
+    const lines = text.split(/\r\n|\n/)
+    let count = 0
+
+    try {
+      const batch = writeBatch(db) // バッチ処理で高速化
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim()
+        if (!line || line.startsWith('メニュー名')) continue
+
+        const [title, priceInStr, durationStr, catStr, orderStr, desc, staffCodesStr] = line.split(',')
+
+        if (!title || !priceInStr) continue
+
+        const priceWithTax = parseInt(priceInStr)
+        const price = calcTaxExcluded(priceWithTax)
+        const duration = parseInt(durationStr) || 30
+        const category = (['barber', 'beauty', 'chiro'].includes(catStr) ? catStr : 'barber') as any
+        const orderPriority = orderStr ? parseInt(orderStr) : 999
+        const targetCodes = staffCodesStr ? staffCodesStr.split('/') : []
+        const staffIds = staffs.value.filter(s => s.code && targetCodes.includes(s.code)).map(s => s.id)
+
+        const newDocRef = doc(collection(db, 'menus'))
+        batch.set(newDocRef, {
+          title,
+          price,
+          price_with_tax: priceWithTax,
+          duration_min: duration,
+          category,
+          description: desc || '',
+          available_staff_ids: staffIds,
+          order_priority: orderPriority
+        })
+        count++
+      }
+      await batch.commit()
+      dialog.alert(`${count}件のメニューを取り込みました`)
+      fetchData()
+    } catch (err) {
+      console.error(err)
+      dialog.alert('取り込みに失敗しました。フォーマットを確認してください。', 'エラー')
+    }
+    target.value = ''
+  }
+  reader.readAsText(file)
 }
 
 const openEditModal = (menu?: Menu) => {
   if (menu) {
     isEditing.value = true
     editTargetId.value = menu.id
-    // 既存データをコピーし、税込価格を計算してセット
-    editForm.value = {
-      ...JSON.parse(JSON.stringify(menu)),
-      priceWithTax: calcTaxIncluded(menu.price)
-    }
+    editForm.value = { ...JSON.parse(JSON.stringify(menu)), priceWithTax: menu.price_with_tax }
     if (!editForm.value.category) editForm.value.category = 'barber'
+    if (editForm.value.order_priority === undefined) editForm.value.order_priority = 10
   } else {
     isEditing.value = false
     editTargetId.value = null
-    // 新規
-    editForm.value = {
-      id: '', title: '',
-      price: 4000, priceWithTax: calcTaxIncluded(4000),
-      duration_min: 60,
-      available_staff_ids: staffs.value.map(s => s.id),
-      description: '',
-      category: 'barber'
-    }
+    editForm.value = { id: '', title: '', price: 4000, priceWithTax: calcTaxIncluded(4000), duration_min: 60, available_staff_ids: staffs.value.map(s => s.id), description: '', category: 'barber', order_priority: 10 }
   }
   showModal.value = true
 }
-
 const saveMenu = async () => {
   if (!editForm.value.title) return dialog.alert('メニュー名を入力してください')
   try {
     const payload = {
-      title: editForm.value.title,
-      price: editForm.value.price, // 保存するのは税抜のみ
-      duration_min: editForm.value.duration_min,
-      available_staff_ids: editForm.value.available_staff_ids,
-      description: editForm.value.description || '',
-      category: editForm.value.category
+      title: editForm.value.title, price: editForm.value.price, price_with_tax: editForm.value.priceWithTax,
+      duration_min: editForm.value.duration_min, available_staff_ids: editForm.value.available_staff_ids,
+      description: editForm.value.description || '', category: editForm.value.category, order_priority: Number(editForm.value.order_priority)
     }
-
-    if (isEditing.value && editTargetId.value) {
-      await updateDoc(doc(db, 'menus', editTargetId.value), payload)
-    } else {
-      await addDoc(collection(db, 'menus'), payload)
-    }
-
-    dialog.alert('保存しました')
-    showModal.value = false
-    fetchData()
+    if (isEditing.value && editTargetId.value) await updateDoc(doc(db, 'menus', editTargetId.value), payload)
+    else await addDoc(collection(db, 'menus'), payload)
+    dialog.alert('保存しました'); showModal.value = false; fetchData()
   } catch (e) { console.error(e); dialog.alert('保存失敗') }
 }
-
-const deleteMenu = async (id: string) => {
-  const ok = await dialog.confirm('本当に削除しますか？', '削除確認', 'danger')
-  if (!ok) return
-  try { await deleteDoc(doc(db, 'menus', id)); fetchData() } catch (e) { dialog.alert('削除失敗') }
-}
-
+const deleteMenu = async (id: string) => { const ok = await dialog.confirm('本当に削除しますか？', '削除確認', 'danger'); if (!ok) return; try { await deleteDoc(doc(db, 'menus', id)); fetchData() } catch (e) { dialog.alert('削除失敗') } }
 const goBack = () => router.push('/admin/settings')
 const getStaffName = (id: string) => staffs.value.find(s => s.id === id)?.name || id
 
@@ -167,6 +211,8 @@ onMounted(() => { fetchData() })
       <div class="content-wrapper">
         <div class="top-actions">
           <span class="tax-info">消費税率: <strong>{{ taxRate }}%</strong></span>
+          <input type="file" ref="fileInput" accept=".csv" style="display: none" @change="importCsv" />
+          <button @click="triggerFileUpload" class="csv-btn">📤 CSVインポート</button>
           <button @click="openEditModal()" class="add-btn">＋ 新規メニュー追加</button>
         </div>
 
@@ -174,38 +220,32 @@ onMounted(() => { fetchData() })
 
         <div v-else class="category-sections">
           <div v-for="cat in categories" :key="cat.id" class="category-section">
-            <h3 class="cat-title">{{ cat.label }}</h3>
-
-            <div v-if="menusByCategory[cat.id as keyof typeof menusByCategory].length === 0" class="no-item">
-              メニューがありません
+            <div class="cat-header">
+              <h3 class="cat-title">{{ cat.label }}</h3>
+              <button @click="deleteCategoryMenus(cat.id, cat.label)" class="delete-cat-btn" title="このカテゴリのメニューを全削除">🗑️
+                全削除</button>
             </div>
 
+            <div v-if="menusByCategory[cat.id as keyof typeof menusByCategory].length === 0" class="no-item">メニューがありません
+            </div>
             <div class="menu-list">
               <div v-for="menu in menusByCategory[cat.id as keyof typeof menusByCategory]" :key="menu.id"
                 class="menu-card">
                 <div class="card-header">
-                  <h3>{{ menu.title }}</h3>
-                  <div class="card-actions">
-                    <button @click="openEditModal(menu)" class="edit-icon">✏️</button>
-                    <button @click="deleteMenu(menu.id)" class="delete-icon">🗑️</button>
+                  <div class="title-group"><span class="order-badge">{{ menu.order_priority }}</span>
+                    <h3>{{ menu.title }}</h3>
                   </div>
+                  <div class="card-actions"><button @click="openEditModal(menu)" class="edit-icon">✏️</button><button
+                      @click="deleteMenu(menu.id)" class="delete-icon">🗑️</button></div>
                 </div>
                 <div class="card-details">
-                  <div class="detail-row">
-                    <span class="label">価格:</span>
-                    <span>
-                      ¥{{ menu.price.toLocaleString() }}
-                      <small class="tax-text">(税込 ¥{{ calcTaxIncluded(menu.price).toLocaleString() }})</small>
-                    </span>
-                  </div>
+                  <div class="detail-row"><span class="label">価格:</span><span>¥{{ menu.price.toLocaleString() }} <small
+                        class="tax-text">(税込 ¥{{ menu.price_with_tax.toLocaleString() }})</small></span></div>
                   <div class="detail-row"><span class="label">時間:</span> {{ menu.duration_min }}分</div>
-                  <div class="detail-row">
-                    <span class="label">担当:</span>
-                    <div class="staff-tags">
-                      <span v-for="staffId in menu.available_staff_ids" :key="staffId" class="staff-tag">{{
-                        getStaffName(staffId) }}</span>
-                      <span v-if="menu.available_staff_ids.length === 0" class="no-staff">担当者なし</span>
-                    </div>
+                  <div class="detail-row"><span class="label">担当:</span>
+                    <div class="staff-tags"><span v-for="staffId in menu.available_staff_ids" :key="staffId"
+                        class="staff-tag">{{ getStaffName(staffId) }}</span><span
+                        v-if="menu.available_staff_ids.length === 0" class="no-staff">担当者なし</span></div>
                   </div>
                 </div>
               </div>
@@ -218,53 +258,36 @@ onMounted(() => { fetchData() })
     <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
       <div class="modal-content">
         <h3>{{ isEditing ? 'メニュー編集' : '新規メニュー' }}</h3>
-
-        <div class="form-group">
-          <label>カテゴリ</label>
-          <div class="radio-group">
-            <label v-for="cat in categories" :key="cat.id" class="radio-item">
-              <input type="radio" :value="cat.id" v-model="editForm.category">
-              {{ cat.label }}
-            </label>
-          </div>
+        <div class="form-group"><label>カテゴリ</label>
+          <div class="radio-group"><label v-for="cat in categories" :key="cat.id" class="radio-item"><input type="radio"
+                :value="cat.id" v-model="editForm.category">{{ cat.label }}</label></div>
         </div>
-
-        <div class="form-group"><label>メニュー名</label><input type="text" v-model="editForm.title"
-            placeholder="例: カット＆カラー" /></div>
-
         <div class="form-row">
-          <div class="form-group">
-            <label>税抜価格 (円)</label>
-            <input type="number" v-model="editForm.price" @input="updateInclusive" />
-          </div>
-          <div class="form-group">
-            <label>税込価格 (円)</label>
-            <input type="number" v-model="editForm.priceWithTax" @input="updateExclusive" />
-          </div>
+          <div class="form-group priority-group"><label>表示順</label><input type="number"
+              v-model="editForm.order_priority" placeholder="10" /></div>
+          <div class="form-group title-group-in-form"><label>メニュー名</label><input type="text" v-model="editForm.title"
+              placeholder="例: カット＆カラー" /></div>
         </div>
-
+        <div class="form-row">
+          <div class="form-group"><label>税抜価格 (円)</label><input type="number" v-model="editForm.price"
+              @input="updateInclusive" /></div>
+          <div class="form-group"><label>税込価格 (円)</label><input type="number" v-model="editForm.priceWithTax"
+              @input="updateExclusive" /></div>
+        </div>
         <div class="form-group"><label>所要時間 (分)</label><input type="number" v-model="editForm.duration_min" /></div>
-
         <div class="form-group"><label>担当可能スタッフ</label>
-          <div class="checkbox-group">
-            <label v-for="staff in staffs" :key="staff.id" class="checkbox-item">
-              <input type="checkbox" :value="staff.id" v-model="editForm.available_staff_ids"> {{ staff.name }}
-            </label>
-          </div>
+          <div class="checkbox-group"><label v-for="staff in staffs" :key="staff.id" class="checkbox-item"><input
+                type="checkbox" :value="staff.id" v-model="editForm.available_staff_ids"> {{ staff.name }}</label></div>
         </div>
         <div class="form-group"><label>説明 (任意)</label><textarea v-model="editForm.description"></textarea></div>
-
-        <div class="modal-actions">
-          <button @click="showModal = false" class="cancel-btn">キャンセル</button>
-          <button @click="saveMenu" class="save-btn">保存</button>
-        </div>
+        <div class="modal-actions"><button @click="showModal = false" class="cancel-btn">キャンセル</button><button
+            @click="saveMenu" class="save-btn">保存</button></div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 既存CSS */
 .settings-container {
   min-height: 100vh;
   background-color: #f4f5f7;
@@ -307,7 +330,7 @@ onMounted(() => { fetchData() })
 }
 
 .content-wrapper {
-  max-width: 800px;
+  width: 95%;
   margin: 0 auto;
   padding-bottom: 2rem;
 }
@@ -336,16 +359,49 @@ onMounted(() => { fetchData() })
   cursor: pointer;
 }
 
+.csv-btn {
+  background: #e67e22;
+  color: white;
+  border: none;
+  padding: 0.8rem 1rem;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-right: 0.5rem;
+}
+
 .category-section {
   margin-bottom: 3rem;
 }
 
-.cat-title {
+/* ヘッダー横並び */
+.cat-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
   border-left: 5px solid #2c3e50;
   padding-left: 1rem;
-  margin-bottom: 1rem;
+}
+
+.cat-title {
+  margin: 0;
   color: #333;
   font-size: 1.3rem;
+}
+
+.delete-cat-btn {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.delete-cat-btn:hover {
+  background: #c0392b;
 }
 
 .no-item {
@@ -360,13 +416,13 @@ onMounted(() => { fetchData() })
 .menu-list {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 
 .menu-card {
   background: white;
   border-radius: 8px;
-  padding: 1.5rem;
+  padding: 1rem;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   border-top: 3px solid #ddd;
 }
@@ -387,14 +443,29 @@ onMounted(() => { fetchData() })
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1rem;
+  margin-bottom: 0.8rem;
   border-bottom: 1px solid #eee;
   padding-bottom: 0.5rem;
 }
 
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.order-badge {
+  background: #eee;
+  color: #666;
+  font-size: 0.75rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
 .card-header h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: #2c3e50;
 }
 
@@ -402,20 +473,20 @@ onMounted(() => { fetchData() })
   background: transparent;
   border: none;
   cursor: pointer;
-  font-size: 1.1rem;
+  font-size: 1rem;
   padding: 0.2rem;
 }
 
 .detail-row {
   display: flex;
-  margin-bottom: 0.5rem;
-  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
 }
 
 .detail-row .label {
   font-weight: bold;
   color: #666;
-  width: 50px;
+  width: 40px;
   flex-shrink: 0;
 }
 
@@ -423,21 +494,21 @@ onMounted(() => { fetchData() })
   color: #e74c3c;
   font-weight: bold;
   margin-left: 0.5rem;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .staff-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: 0.2rem;
 }
 
 .staff-tag {
   background: #e0f7fa;
   color: #006064;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.8rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.75rem;
 }
 
 .no-staff {
@@ -509,6 +580,14 @@ onMounted(() => { fetchData() })
 }
 
 .form-row .form-group {
+  flex: 1;
+}
+
+.priority-group {
+  flex: 0 0 80px;
+}
+
+.title-group-in-form {
   flex: 1;
 }
 

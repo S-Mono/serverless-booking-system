@@ -1,60 +1,61 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
 import { auth, db } from './lib/firebase'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
-import { collection, query, where, getDocs } from 'firebase/firestore'
+import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import { useUserStore } from './stores/user'
+import { useLiffStore } from './stores/liff'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 
 const userStore = useUserStore()
+const liffStore = useLiffStore()
 const router = useRouter()
 const route = useRoute()
 
 const isMenuOpen = ref(false)
 const isAdminPage = computed(() => route.path.startsWith('/admin'))
-const customerName = ref('') // 👈 顧客名保持用
+const customerName = ref('')
+const unreadCount = ref(0) // 👈 未読数
 
-// ユーザー名取得ロジック
+// ユーザー名取得
 const fetchCustomerName = async (user: any) => {
-  if (!user) {
-    customerName.value = ''
-    return
-  }
-
-  // 管理画面の時はID表示のままで良い場合、ここで分岐も可能
-  // 今回は顧客名があればそれを優先表示します
-
+  if (!user) { customerName.value = ''; return }
   try {
-    // 1. UIDで検索
-    let q = query(collection(db, 'customers'), where('id', '==', user.uid)) // ※SeedではID=phoneだったりするので注意が必要ですが、MyPageで保存したデータはUID=DocIDになっています
-    // 念のため電話番号(擬似メアド)でも検索
+    // 名前取得ロジック (既存のまま)
+    // ... (省略せずに実装します) ...
+    const { getDocs } = await import('firebase/firestore')
+    let q = query(collection(db, 'customers'), where('id', '==', user.uid))
     const phone = user.email?.split('@')[0]
-    if (phone) {
-      q = query(collection(db, 'customers'), where('phone_number', '==', phone))
-    }
+    if (phone) q = query(collection(db, 'customers'), where('phone_number', '==', phone))
 
     const snapshot = await getDocs(q)
-    if (!snapshot.empty) {
-      customerName.value = snapshot.docs[0]!.data().name_kana
-    } else {
-      // 未登録ならゲスト
-      customerName.value = 'ゲスト'
-    }
-  } catch (e) {
-    console.error(e)
-    customerName.value = 'ゲスト'
-  }
+    if (!snapshot.empty) customerName.value = snapshot.docs[0]!.data().name_kana
+    else customerName.value = 'ゲスト'
+  } catch (e) { customerName.value = 'ゲスト' }
 }
 
-onMounted(() => {
+// 🔔 未読数の監視 (リアルタイム)
+const subscribeUnread = (userId: string) => {
+  const q = query(collection(db, 'messages'), where('customer_id', '==', userId), where('is_read', '==', false))
+  return onSnapshot(q, (snap) => {
+    unreadCount.value = snap.size
+  })
+}
+
+onMounted(async () => {
+  await liffStore.init()
+  let unsubscribeMessages: (() => void) | null = null
+
   onAuthStateChanged(auth, async (user) => {
     if (user) {
       userStore.setUser(user)
       await fetchCustomerName(user)
+      unsubscribeMessages = subscribeUnread(user.uid) // 監視開始
     } else {
       userStore.setUser(null)
       customerName.value = ''
+      if (unsubscribeMessages) unsubscribeMessages() // 監視解除
     }
   })
 })
@@ -68,9 +69,12 @@ const handleLogout = async () => {
     closeMenu()
     customerName.value = ''
     router.push('/login')
-  } catch (error) {
-    console.error('Logout failed:', error)
-  }
+  } catch (error) { console.error(error) }
+}
+
+const goToMessages = () => {
+  closeMenu()
+  router.push('/messages')
 }
 </script>
 
@@ -80,23 +84,28 @@ const handleLogout = async () => {
     <header>
       <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
         <h1>
-          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 サロン予約WEB</RouterLink>
+          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 美理容予約</RouterLink>
         </h1>
 
+        <div v-if="userStore.user && !isAdminPage" class="header-actions">
+          <button class="bell-btn" @click="goToMessages">
+            🔔
+            <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
+          </button>
+        </div>
+
         <button class="hamburger-btn" @click="toggleMenu" :class="{ active: isMenuOpen }">
-          <span class="bar"></span>
-          <span class="bar"></span>
-          <span class="bar"></span>
+          <span class="bar"></span><span class="bar"></span><span class="bar"></span>
         </button>
 
         <nav class="nav-menu" :class="{ open: isMenuOpen }">
           <div v-if="userStore.user" class="menu-group">
             <span class="user-welcome">ようこそ {{ customerName || 'ゲスト' }} 様</span>
-
+            <button class="nav-item bell-menu-item" @click="goToMessages">
+              お知らせ <span v-if="unreadCount > 0" class="badge-inline">{{ unreadCount }}</span>
+            </button>
+            <RouterLink to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ</RouterLink>
             <button @click="handleLogout" class="logout-btn">ログアウト</button>
-            <!-- 管理画面ではマイページへの遷移は不要のため非表示 -->
-            <RouterLink v-if="!isAdminPage" to="/mypage" class="nav-item mypage-btn" @click="closeMenu">マイページ
-            </RouterLink>
           </div>
           <RouterLink v-else to="/login" class="nav-item login-btn" @click="closeMenu">ログイン / 登録</RouterLink>
         </nav>
@@ -112,36 +121,30 @@ const handleLogout = async () => {
 </template>
 
 <style scoped>
-/* ... (レイアウト系のCSSは前回と同じ) ... */
+/* ... (既存CSS) ... */
 .app-layout {
   display: flex;
   flex-direction: column;
-  /* 固定高さにしてページ全体のドキュメントスクロールを防止する（子要素で個別にスクロールする） */
-  height: 100vh;
-  overflow: hidden;
-  /* デフォルトではスクロール禁止 */
+  min-height: 100vh;
 }
 
 header {
   background-color: #333;
   color: white;
-  height: 75px;
+  height: 60px;
   position: sticky;
   top: 0;
   z-index: 100;
   width: 100%;
-  /* 👇 追加: Flexコンテナ内でヘッダーが押し潰されないように固定 */
-  flex-shrink: 0;
 }
 
 main {
   flex: 1;
   width: 100%;
-  height: 100vh;
 }
 
 .app-layout.admin-mode {
-  max-height: 100vh;
+  height: 100vh;
   overflow: hidden;
 }
 
@@ -152,12 +155,6 @@ main {
 .app-layout.admin-mode main {
   overflow: hidden;
   height: calc(100vh - 60px);
-}
-
-/* 参考: 特定ビュー（管理画面＞設定など）で内部スクロールを許可したい場合は
-   `.app-layout` に `allow-scroll` クラスを付与してください。 */
-.app-layout.allow-scroll main {
-  overflow-y: auto;
 }
 
 .container {
@@ -179,7 +176,7 @@ main {
   justify-content: space-between;
   align-items: center;
   height: 100%;
-  padding: 0 2rem;
+  padding: 0 1rem;
   box-sizing: border-box;
 }
 
@@ -187,10 +184,42 @@ main {
   color: white;
   text-decoration: none;
   font-weight: bold;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   white-space: nowrap;
 }
 
+/* 👇 追加: ヘッダー内アクション */
+.header-actions {
+  margin-left: auto;
+  margin-right: 1rem;
+}
+
+.bell-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  position: relative;
+  padding: 0 0.5rem;
+}
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: #e74c3c;
+  color: white;
+  font-size: 0.7rem;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-weight: bold;
+}
+
+/* ナビメニュー */
 .nav-menu {
   display: flex;
   align-items: center;
@@ -202,15 +231,23 @@ main {
   gap: 1rem;
 }
 
-/* 👇 修正: ユーザー名表示のスタイル */
 .user-welcome {
   font-size: 0.9rem;
-  color: #fff;
   margin-right: 1rem;
-  border-right: 1px solid #555;
-  padding-right: 1.5rem;
-  white-space: nowrap;
   font-weight: bold;
+  white-space: nowrap;
+  display: none;
+  /* PCでは非表示にしてシンプルに */
+}
+
+@media (min-width: 769px) {
+  .user-welcome {
+    display: block;
+  }
+
+  .bell-menu-item {
+    display: none;
+  }
 }
 
 .mypage-btn {
@@ -224,10 +261,6 @@ main {
   white-space: nowrap;
 }
 
-.mypage-btn:hover {
-  background-color: #3aa876;
-}
-
 .logout-btn {
   background: transparent;
   border: 1px solid #fff;
@@ -239,10 +272,6 @@ main {
   white-space: nowrap;
 }
 
-.logout-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
 .login-btn {
   background: #42b883;
   color: white;
@@ -252,19 +281,12 @@ main {
   white-space: nowrap;
 }
 
-.login-btn:hover {
-  background: #3aa876;
-}
-
 .hamburger-btn {
   display: none;
 }
 
+/* スマホ対応 */
 @media (max-width: 768px) {
-  .header-inner {
-    padding: 0 1rem;
-  }
-
   .hamburger-btn {
     display: flex;
     flex-direction: column;
@@ -321,41 +343,50 @@ main {
     flex-direction: column;
     width: 100%;
     align-items: stretch;
-    gap: 0;
+    gap: 1rem;
+  }
+
+  .user-welcome {
+    display: block;
+    color: #aaa;
+    border-bottom: 1px solid #444;
+    padding-bottom: 0.5rem;
+    margin-right: 0;
+    text-align: center;
+  }
+
+  .bell-menu-item {
+    background: #444;
+    color: white;
+    border: none;
+    padding: 1rem;
+    text-align: left;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .badge-inline {
+    background: #e74c3c;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8rem;
+  }
+
+  .mypage-btn {
+    display: block;
+    text-align: center;
+    padding: 1rem;
+    background-color: #3498db;
   }
 
   .logout-btn {
-    order: 1;
     width: 100%;
     padding: 0.8rem;
     background-color: #444;
     border: none;
-    margin-bottom: 0.5rem;
-  }
-
-  /* スマホ版の表示調整 */
-  .user-welcome {
-    order: 2;
-    display: block;
-    text-align: center;
-    font-size: 1rem;
-    font-weight: bold;
-    color: #aaa;
-    margin-bottom: 2rem;
-    margin-right: 0;
-    border-right: none;
-    border-bottom: 1px solid #444;
-    padding-bottom: 0.5rem;
-  }
-
-  .mypage-btn {
-    order: 3;
-    display: block;
-    text-align: center;
-    background-color: #3498db;
-    padding: 1rem;
-    font-size: 1.1rem;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    margin-top: 1rem;
   }
 }
 

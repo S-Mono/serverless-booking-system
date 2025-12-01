@@ -14,9 +14,24 @@ const ADMIN_KEY = import.meta.env.VITE_ADMIN_KEY
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: '/', name: 'home', component: HomeView },
-    { path: '/login', name: 'login', component: LoginView },
-    { path: '/mypage', name: 'mypage', component: MyPageView },
+    { 
+      path: '/',
+      name: 'home',
+      component: HomeView 
+    },
+    { 
+      path: '/login',
+      name: 'login',
+      component: LoginView },
+    { 
+      path: '/mypage', 
+      name: 'mypage',
+      component: MyPageView },
+    {
+      path: '/messages',
+      name: 'messages',
+      component: () => import('../views/MessagesView.vue')
+    },
     
     // 管理画面ルート群
     {

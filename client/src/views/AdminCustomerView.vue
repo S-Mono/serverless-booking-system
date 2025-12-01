@@ -257,8 +257,10 @@ onMounted(() => { fetchCustomers() })
                         <div class="form-group">
                             <label>顧客タイプ</label>
                             <div class="radio-group">
-                                <label><input type="radio" :value="true" v-model="editForm.is_existing_customer"> 既存顧客</label>
-                                <label><input type="radio" :value="false" v-model="editForm.is_existing_customer"> 新規顧客</label>
+                                <label><input type="radio" :value="true" v-model="editForm.is_existing_customer">
+                                    既存顧客</label>
+                                <label><input type="radio" :value="false" v-model="editForm.is_existing_customer">
+                                    新規顧客</label>
                             </div>
                         </div>
                         <div class="form-group">

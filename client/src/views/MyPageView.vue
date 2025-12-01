@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { db, auth } from '../lib/firebase'
-import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc } from 'firebase/firestore'
+import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc, updateDoc } from 'firebase/firestore'
 import { onAuthStateChanged } from 'firebase/auth'
 import { useDialogStore } from '../stores/dialog'
 
@@ -77,7 +77,21 @@ const cancelReservation = async (id: string) => {
   const ok = await dialog.confirm('キャンセルしますか？')
   if (!ok) return
   try {
+    // 1. 予約自体の削除 (既存処理)
     await deleteDoc(doc(db, 'reservations', id))
+
+    // 🟢 2. 【追加】関連するメッセージを「キャンセル扱い」に更新
+    const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
+    const msgSnap = await getDocs(msgQ)
+
+    // 関連するメッセージがあれば全て更新
+    msgSnap.forEach(async (d) => {
+      await updateDoc(d.ref, {
+        is_cancelled: true, // キャンセル済みフラグ
+        title: '【キャンセル済】' + d.data().title // タイトルもわかりやすく変更
+      })
+    })
+
     dialog.alert('予約をキャンセルしました')
     reservations.value = reservations.value.filter(res => res.id !== id)
   } catch (error) { console.error(error); dialog.alert('キャンセル失敗', 'エラー') }

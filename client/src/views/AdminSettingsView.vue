@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { db } from '../lib/firebase'
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, getDoc } from 'firebase/firestore'
@@ -14,13 +14,14 @@ interface ShopConfig {
   holiday_weekdays: number[]
   closed_dates: string[]
   business_hours: { start: string; end: string }
-  tax_rate: number // 👈 追加: 消費税率
+  tax_rate: number
 }
 
 interface Staff {
   id: string; name: string; display_name: string; order_priority: number;
   roles: { accepts_new_customer: boolean; accepts_free_booking: boolean };
   is_working: boolean;
+  code: string; // 👈 CSV用コード
 }
 
 const staffs = ref<Staff[]>([])
@@ -31,10 +32,11 @@ const config = ref<ShopConfig>({
   holiday_weekdays: [],
   closed_dates: [],
   business_hours: { start: '09:00', end: '19:00' },
-  tax_rate: 10 // 👈 デフォルト10%
+  tax_rate: 10
 })
 
 const newStaff = ref({
+  code: '',
   name: '', display_name: '', order_priority: 99,
   roles: { accepts_new_customer: true, accepts_free_booking: true }, is_working: true
 })
@@ -49,7 +51,7 @@ const fetchData = async () => {
     const snap = await getDocs(collection(db, 'staffs'))
     staffs.value = snap.docs.map(doc => {
       const d = doc.data()
-      return { id: doc.id, ...d, is_working: d.is_working ?? true }
+      return { id: doc.id, ...d, is_working: d.is_working ?? true, code: d.code || '' }
     })
       .sort((a: any, b: any) => a.order_priority - b.order_priority) as Staff[]
 
@@ -60,7 +62,7 @@ const fetchData = async () => {
         holiday_weekdays: data.holiday_weekdays || [],
         closed_dates: data.closed_dates || [],
         business_hours: data.business_hours || { start: '09:00', end: '19:00' },
-        tax_rate: data.tax_rate ?? 10 // 👈 読み込み（なければ10）
+        tax_rate: data.tax_rate ?? 10
       }
     }
   } catch (e) { console.error(e) } finally { loading.value = false }
@@ -73,7 +75,7 @@ const saveConfig = async () => {
       holiday_weekdays: config.value.holiday_weekdays,
       closed_dates: config.value.closed_dates,
       business_hours: config.value.business_hours,
-      tax_rate: Number(config.value.tax_rate) // 👈 数値として保存
+      tax_rate: Number(config.value.tax_rate)
     })
     dialog.alert('店舗設定を保存しました')
   } catch (e) { console.error(e); dialog.alert('保存失敗') }
@@ -94,20 +96,21 @@ const saveStaff = async (staff: Staff) => {
   await updateDoc(doc(db, 'staffs', staff.id), { ...staff })
   dialog.alert(`"${staff.name}" を更新しました`)
 }
+
 const addStaff = async () => {
   if (!newStaff.value.name) return
   await addDoc(collection(db, 'staffs'), { ...newStaff.value })
   dialog.alert('追加しました')
-  fetchStaffs()
+  fetchData() // 👈 修正: fetchDataを呼ぶ
 }
+
 const removeStaff = async (id: string) => {
   const ok = await dialog.confirm('削除しますか？', '確認', 'danger')
   if (ok) {
     await deleteDoc(doc(db, 'staffs', id))
-    fetchStaffs()
+    fetchData() // 👈 修正: fetchDataを呼ぶ
   }
 }
-const fetchStaffs = fetchData
 
 const handleSeed = async () => {
   const password = prompt('開発者用パスワードを入力してください')
@@ -124,16 +127,7 @@ const handleSeed = async () => {
 }
 const goBack = () => router.push('/admin')
 
-onMounted(() => {
-  // 管理画面の設定ページでは画面内スクロールを有効にする
-  document.querySelector('.app-layout')?.classList.add('allow-scroll')
-  fetchData()
-})
-
-onUnmounted(() => {
-  // 離脱時はクラスを取り除き、他ページのスクロールを抑止する
-  document.querySelector('.app-layout')?.classList.remove('allow-scroll')
-})
+onMounted(() => { fetchData() })
 </script>
 
 <template>
@@ -231,6 +225,10 @@ onUnmounted(() => {
                     <button class="delete-btn" @click="removeStaff(staff.id)">削除</button>
                   </div>
                   <div class="staff-grid">
+                    <div class="input-group" style="flex: 0 0 80px;">
+                      <label>コード</label>
+                      <input type="text" v-model="staff.code" placeholder="ft" />
+                    </div>
                     <div class="input-group"><label>略称</label><input type="text" v-model="staff.name" /></div>
                     <div class="input-group"><label>表示名</label><input type="text" v-model="staff.display_name" /></div>
                   </div>
@@ -245,8 +243,15 @@ onUnmounted(() => {
               <div class="add-staff-area">
                 <h4>➕ スタッフ追加</h4>
                 <div class="staff-grid">
-                  <input type="text" v-model="newStaff.name" placeholder="略称" />
-                  <input type="text" v-model="newStaff.display_name" placeholder="表示名" />
+                  <div class="input-group code-group">
+                    <input type="text" v-model="newStaff.code" placeholder="コード" />
+                  </div>
+                  <div class="input-group">
+                    <input type="text" v-model="newStaff.name" placeholder="略称" />
+                  </div>
+                  <div class="input-group">
+                    <input type="text" v-model="newStaff.display_name" placeholder="表示名" />
+                  </div>
                 </div>
                 <button @click="addStaff" class="add-btn">追加</button>
               </div>
@@ -266,7 +271,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* CSSは前回と同じ */
 .settings-container {
   height: 100%;
   display: flex;
@@ -482,12 +486,19 @@ onUnmounted(() => {
 .input-row {
   display: flex;
   gap: 1rem;
+  margin-bottom: 1.5rem;
 }
 
 .input-group {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 100px;
+}
+
+.input-group.code-group {
+  flex: 0 0 80px;
+  min-width: 80px;
 }
 
 .input-group label {
@@ -510,13 +521,14 @@ onUnmounted(() => {
 }
 
 .staff-item {
-  padding: 1rem;
+  padding: 1.5rem;
+  /* パディングを少し広げました */
   border: 1px solid #ddd;
   border-radius: 6px;
   background: #fff;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 1rem;
 }
 
 .staff-item.inactive {
@@ -532,19 +544,14 @@ onUnmounted(() => {
   color: #999;
 }
 
+/* 👇 修正: マージンを追加してボタンとの間隔を確保 */
 .staff-grid {
   display: flex;
   gap: 1rem;
-  margin-bottom: 1rem;
-  /* 👈 ここを 0.5rem から 1.5rem に広げました */
-}
-
-/* もし .staff-grid を使っていないカードがある場合、汎用的に .input-row にもマージンをつける */
-.input-row {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  /* 👈 ここも広げる */
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+  /* これで入力欄の下が広がります */
 }
 
 .roles-grid {
@@ -554,9 +561,12 @@ onUnmounted(() => {
   margin-top: 0.2rem;
 }
 
+/* 👇 修正: ボタンエリアのマージン追加 */
 .action-row {
   text-align: right;
   margin-top: auto;
+  padding-top: 0.5rem;
+  /* 念のため少しパディングも */
 }
 
 .update-btn {
@@ -580,24 +590,25 @@ onUnmounted(() => {
 
 .add-staff-area {
   background: #e8f6f3;
-  padding: 1rem;
-  border-radius: 6px;
+  padding: 1.5rem;
+  border-radius: 8px;
   border: 1px solid #a2d9ce;
+  margin-top: 2rem;
 }
 
 .add-staff-area h4 {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 1rem 0;
   color: #16a085;
-  font-size: 1rem;
+  font-size: 1.1rem;
 }
 
 .add-btn {
-  margin-top: 0.5rem;
+  margin-top: 1rem;
   width: 100%;
   background: #16a085;
   color: white;
   border: none;
-  padding: 0.5rem;
+  padding: 0.8rem;
   border-radius: 4px;
   font-weight: bold;
   cursor: pointer;
@@ -628,6 +639,20 @@ onUnmounted(() => {
 
   .staff-list {
     grid-template-columns: 1fr;
+  }
+
+  .staff-grid {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .input-group {
+    width: 100%;
+  }
+
+  .input-group.code-group {
+    flex: 1;
+    width: 100%;
   }
 }
 </style>

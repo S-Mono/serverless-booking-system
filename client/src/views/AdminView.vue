@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { db, auth } from '../lib/firebase'
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
+import { collection, getDocs, setDoc, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
 import { useRouter } from 'vue-router'
 import { useDialogStore } from '../stores/dialog'
+import { messaging, VAPID_KEY } from '../lib/firebase' // 👈 VAPID_KEY
+import { getToken } from 'firebase/messaging'
 
 const router = useRouter()
 const dialog = useDialogStore()
+
+const isNotifyEnabled = ref(false) // 現在通知ONかどうか
 
 interface Staff { id: string; name: string }
 interface Reservation {
@@ -91,21 +95,119 @@ const initData = async (fetchMaster = true) => {
         if (hours?.end) closeHour.value = parseInt(hours.end.split(':')[0]!, 10)
       }
     }
+
     const startOfDay = new Date(selectedDate.value); startOfDay.setHours(0, 0, 0, 0)
     const endOfDay = new Date(selectedDate.value); endOfDay.setDate(endOfDay.getDate() + 1); endOfDay.setHours(0, 0, 0, 0)
+    const notificationSound = new Audio('/sounds/Chime-Announce05-3.mp3');
     if (unsubscribe) unsubscribe()
     const q = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
     unsubscribe = onSnapshot(q, (snapshot) => {
       reservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          const data = change.doc.data(); const createdAt = data.created_at?.toDate().getTime() || 0; const now = new Date().getTime()
-          if (data.source === 'web' && (now - createdAt) < 60000 && !loading.value) new Notification('✨ 新しいWEB予約が入りました！', { body: `${data.customer_name}様\n${data.menu_items[0]?.title}` })
+          const data = change.doc.data();
+          const createdAt = data.created_at?.toDate().getTime() || 0;
+          const now = new Date().getTime();
+
+          // 1分以内に作成された予約（＝過去データ取得時ではなく、今の新規予約）なら
+          if ((now - createdAt) < 60000 && !loading.value) {
+
+            // 🔴 修正: 通知がONのときだけ実行する条件を追加
+            if (isNotifyEnabled.value) {
+
+              // 🎵 音を鳴らす
+              notificationSound.play()
+                .then(() => console.log('チャイム再生成功'))
+                .catch(e => console.warn('チャイム再生ブロック', e));
+
+              // ✨ ダイアログ表示
+              const timeStr = `${formatTime(data.start_at)} - ${formatTime(data.end_at)}`;
+              const staffName = getStaffName(data.staff_id);
+              const menuName = data.menu_items?.[0]?.title || 'メニュー不明';
+
+              dialog.alert(
+                `${data.customer_name}様から新規予約があります！\n\n担当: ${staffName}\n時間: ${timeStr}\nメニュー: ${menuName}`,
+                '🎉 新着予約'
+              );
+            }
+          }
         }
       })
       loading.value = false
     })
   } catch (e) { console.error(e); loading.value = false }
+}
+
+// 🔔 1. 画面ロード時に現在の通知設定を確認する
+const checkNotificationStatus = async () => {
+  try {
+    // まずブラウザの許可状態を確認
+    if (Notification.permission !== 'granted') {
+      isNotifyEnabled.value = false
+      return
+    }
+
+    // トークンを取得して、DBにあるかチェック
+    const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+    if (token) {
+      const docSnap = await getDoc(doc(db, 'admin_tokens', token))
+      isNotifyEnabled.value = docSnap.exists()
+    }
+  } catch (e) {
+    console.error('通知ステータス確認エラー', e)
+    isNotifyEnabled.value = false
+  }
+}
+
+// 🔔 2. トグル切り替え処理
+const toggleNotification = async () => {
+  if (isNotifyEnabled.value) {
+    // ONならOFFにする（削除処理）
+    await turnOffNotification()
+  } else {
+    // OFFならONにする（登録処理）
+    await requestNotificationPermission()
+  }
+}
+
+// 🔔 3. 通知ON処理 (既存の requestNotificationPermission を少し修正)
+const requestNotificationPermission = async () => {
+  try {
+    const permission = await Notification.requestPermission()
+    if (permission === 'granted') {
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+      if (token) {
+        await setDoc(doc(db, 'admin_tokens', token), {
+          token: token,
+          uid: auth.currentUser?.uid || 'unknown_admin',
+          device_agent: navigator.userAgent,
+          created_at: Timestamp.now()
+        })
+        isNotifyEnabled.value = true // 👈 状態更新
+        dialog.alert('この端末での通知を【ON】にしました！')
+      }
+    } else {
+      dialog.alert('ブラウザの設定で通知がブロックされています。')
+    }
+  } catch (e) {
+    console.error(e)
+    dialog.alert('設定に失敗しました')
+  }
+}
+// 🔔 4. 通知OFF処理 (新規)
+const turnOffNotification = async () => {
+  try {
+    const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+    if (token) {
+      // DBから削除
+      await deleteDoc(doc(db, 'admin_tokens', token))
+      isNotifyEnabled.value = false // 👈 状態更新
+      dialog.alert('この端末での通知を【OFF】にしました。')
+    }
+  } catch (e) {
+    console.error(e)
+    dialog.alert('解除に失敗しました')
+  }
 }
 
 const submitReservation = async () => {
@@ -138,10 +240,58 @@ const submitReservation = async () => {
 const deleteReservation = async (id: string) => {
   const ok = await dialog.confirm('本当に削除しますか？\n（復元できません）', '削除確認', 'danger')
   if (!ok) return
-  try { await deleteDoc(doc(db, 'reservations', id)); showDetailModal.value = false } catch (e) { dialog.alert('削除に失敗しました') }
+
+  try {
+    // 1. 予約データの削除 (物理削除)
+    await deleteDoc(doc(db, 'reservations', id))
+
+    // 🟢 2. 関連するメッセージを「キャンセル扱い」に更新
+    const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
+    const msgSnap = await getDocs(msgQ)
+
+    msgSnap.forEach(async (d) => {
+      await updateDoc(d.ref, {
+        is_cancelled: true,
+        title: '【キャンセル済】' + d.data().title
+      })
+    })
+
+    showDetailModal.value = false
+    // 完了ダイアログは出さずにスッと閉じる（既存の挙動）
+
+  } catch (e) {
+    console.error(e)
+    dialog.alert('削除に失敗しました')
+  }
 }
 
-const approveReservation = async (id: string) => { try { await updateDoc(doc(db, 'reservations', id), { status: 'confirmed' }); await dialog.alert('予約を確定しました'); showDetailModal.value = false } catch (e) { dialog.alert('承認に失敗しました') } }
+// 🟢 予約確定 (メッセージ作成機能付き)
+const approveReservation = async (res: Reservation) => {
+  try {
+    // 1. ステータス更新
+    await updateDoc(doc(db, 'reservations', res.id), { status: 'confirmed' })
+
+    // 2. 顧客へのメッセージ作成 (customer_idがある場合のみ)
+    if (res.customer_id) {
+      const dateStr = res.start_at.toDate().toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+      await addDoc(collection(db, 'messages'), {
+        customer_id: res.customer_id,
+        reservation_id: res.id,
+        title: '予約が確定しました',
+        body: `以下のご予約が確定いたしました。\n\n日時: ${dateStr}\nメニュー: ${res.menu_items[0]?.title}\n担当: ${getStaffName(res.staff_id)}\n\nご来店を心よりお待ちしております。`,
+        is_read: false,
+        created_at: Timestamp.now()
+      })
+    }
+
+    await dialog.alert('予約を確定し、お客様にお知らせを送りました')
+    showDetailModal.value = false
+  } catch (e) {
+    console.error(e)
+    dialog.alert('承認処理に失敗しました')
+  }
+}
 
 // 🔍 予約詳細を開く（履歴取得も行う）
 const openReservationDetail = async (res: Reservation) => {
@@ -284,6 +434,9 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
         <h2>予約管理ダッシュボード</h2>
       </div>
       <div class="header-right">
+        <button @click="toggleNotification" class="notify-btn" :class="{ 'active': isNotifyEnabled }">
+          {{ isNotifyEnabled ? '🔕 通知OFFにする' : '🔔 通知ONにする' }}
+        </button>
         <button @click="router.push('/admin/customers')" class="nav-link-btn">👥 顧客管理</button>
         <div class="status-badge">🟢 リアルタイム接続中</div>
         <button @click="$router.push('/admin/settings')" class="settings-link-btn">⚙ 設定</button>
@@ -423,7 +576,7 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 
         <div v-if="selectedReservation.status === 'pending'" class="pending-alert">
           <p>⚠️ <strong>WEBからの仮予約です</strong></p>
-          <button class="approve-btn" @click="approveReservation(selectedReservation.id)">✅ 予約を確定する</button>
+          <button class="approve-btn" @click="approveReservation(selectedReservation)">✅ 予約を確定する</button>
         </div>
 
         <div class="detail-body">
@@ -526,6 +679,35 @@ onUnmounted(() => { if (unsubscribe) unsubscribe() })
 
 .settings-link-btn:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.notify-btn {
+  /* デフォルト(通知OFFの状態)はオレンジや緑で「押してね」感を出す */
+  background: #e67e22;
+  color: white;
+  border: none;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: bold;
+  margin-right: 0.5rem;
+  transition: all 0.2s;
+}
+
+.notify-btn:hover {
+  opacity: 0.9;
+}
+
+/* 通知がONの状態（＝OFFにするボタン） */
+.notify-btn.active {
+  background: #139933;
+  /* グレーにして「今は有効だよ」感を出す */
+  /* または #34495e (ダークブルー) などお好みで */
+}
+
+.notify-btn.active:hover {
+  background: #95a5a6;
 }
 
 /* ボディエリア (ここより下で横並び) */
