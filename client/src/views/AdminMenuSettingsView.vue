@@ -127,17 +127,18 @@ const importCsv = async (event: Event) => {
       const batch = writeBatch(db) // バッチ処理で高速化
 
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim()
+        const line: string = lines[i]!.trim()
         if (!line || line.startsWith('メニュー名')) continue
 
         const [title, priceInStr, durationStr, catStr, orderStr, desc, staffCodesStr] = line.split(',')
 
         if (!title || !priceInStr) continue
 
-        const priceWithTax = parseInt(priceInStr)
+        // 各変数に `?? ''` (undefinedなら空文字) や `?? '0'` をつけて型エラーを回避
+        const priceWithTax = parseInt(priceInStr ?? '0')
         const price = calcTaxExcluded(priceWithTax)
-        const duration = parseInt(durationStr) || 30
-        const category = (['barber', 'beauty', 'chiro'].includes(catStr) ? catStr : 'barber') as any
+        const duration = parseInt(durationStr ?? '30') || 30
+        const category = (['barber', 'beauty', 'chiro'].includes(catStr ?? '') ? catStr : 'barber') as any
         const orderPriority = orderStr ? parseInt(orderStr) : 999
         const targetCodes = staffCodesStr ? staffCodesStr.split('/') : []
         const staffIds = staffs.value.filter(s => s.code && targetCodes.includes(s.code)).map(s => s.id)
