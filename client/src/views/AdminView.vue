@@ -5,7 +5,7 @@ import { collection, getDocs, setDoc, addDoc, updateDoc, deleteDoc, doc, query, 
 import { useRouter } from 'vue-router'
 import { useDialogStore } from '../stores/dialog'
 import { messaging, VAPID_KEY } from '../lib/firebase' // 👈 VAPID_KEY
-import { getToken } from 'firebase/messaging'
+import { getToken, onMessage } from 'firebase/messaging'
 
 const router = useRouter()
 const dialog = useDialogStore()
@@ -54,6 +54,42 @@ const newReservation = ref({
   staff_id: '', start_time: '', customer_name: '', customer_phone: '', menu_id: '', note: ''
 })
 
+// 共有の Audio インスタンス（プリロード用）
+const notificationSound = new Audio('/sounds/Chime-Announce05-3.mp3');
+// onMessage の解除関数を保持する（initData が複数回呼ばれても一度だけ登録する）
+let unregisterFcmOnMessage: (() => void) | null = null
+
+// フォールバック: WebAudio を使って短いビープを鳴らす（mp3 が取得できない or 再生がブロックされた場合）
+const playFallbackBeep = () => {
+  try {
+    const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext
+    if (!AudioCtx) {
+      console.warn('WebAudio not supported in this browser')
+      return
+    }
+    const ctx = new AudioCtx()
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.type = 'sine'
+    o.frequency.value = 880 // A5
+    g.gain.value = 0
+    o.connect(g)
+    g.connect(ctx.destination)
+    const now = ctx.currentTime
+    g.gain.setValueAtTime(0.0001, now)
+    g.gain.exponentialRampToValueAtTime(0.2, now + 0.02)
+    o.start(now)
+    // 200ms 程度でフェードアウトして停止
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.18)
+    setTimeout(() => {
+      try { o.stop(); ctx.close() } catch (_) { /* ignore */ }
+    }, 220)
+    return
+  } catch (e) {
+    console.warn('WebAudio fallback failed', e)
+  }
+}
+
 const timeLabels = computed(() => {
   const labels = []
   for (let i = openHour.value; i < closeHour.value; i++) labels.push(`${i}:00`)
@@ -98,7 +134,7 @@ const initData = async (fetchMaster = true) => {
 
     const startOfDay = new Date(selectedDate.value); startOfDay.setHours(0, 0, 0, 0)
     const endOfDay = new Date(selectedDate.value); endOfDay.setDate(endOfDay.getDate() + 1); endOfDay.setHours(0, 0, 0, 0)
-    const notificationSound = new Audio('/sounds/Chime-Announce05-3.mp3');
+    // notificationSound はモジュールスコープの共有インスタンスを使う
     if (unsubscribe) unsubscribe()
     const q = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
     unsubscribe = onSnapshot(q, (snapshot) => {
@@ -115,10 +151,14 @@ const initData = async (fetchMaster = true) => {
             // 🔴 修正: 通知がONのときだけ実行する条件を追加
             if (isNotifyEnabled.value) {
 
-              // 🎵 音を鳴らす
+              // 🎵 音を鳴らす（共有インスタンスを再利用）
               notificationSound.play()
                 .then(() => console.log('チャイム再生成功'))
-                .catch(e => console.warn('チャイム再生ブロック', e));
+                .catch(e => {
+                  console.warn('チャイム再生ブロック', e)
+                  // mp3 のロードや再生が何らかの理由で失敗したら WebAudio フォールバック
+                  playFallbackBeep()
+                });
 
               // ✨ ダイアログ表示
               const timeStr = `${formatTime(data.start_at)} - ${formatTime(data.end_at)}`;
@@ -135,6 +175,8 @@ const initData = async (fetchMaster = true) => {
       })
       loading.value = false
     })
+
+    // Note: Foreground FCM handler is registered once in onMounted lifecycle
   } catch (e) { console.error(e); loading.value = false }
 }
 
@@ -174,8 +216,10 @@ const toggleNotification = async () => {
 const requestNotificationPermission = async () => {
   try {
     const permission = await Notification.requestPermission()
+    console.log('requestNotificationPermission - Notification.permission:', permission)
     if (permission === 'granted') {
       const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+      console.log('requestNotificationPermission - getToken returned:', token)
       if (token) {
         await setDoc(doc(db, 'admin_tokens', token), {
           token: token,
@@ -184,7 +228,24 @@ const requestNotificationPermission = async () => {
           created_at: Timestamp.now()
         })
         isNotifyEnabled.value = true // 👈 状態更新
+        console.log('requestNotificationPermission - saved token to admin_tokens')
         dialog.alert('この端末での通知を【ON】にしました！')
+        // ユーザーが通知を有効にした直後は「ユーザー操作」とみなされるため
+        // このタイミングで一度音を再生しておくと、今後の非同期通知再生で
+        // ブラウザの自動再生制限に引っかかりにくくなります。
+        try {
+          // 既に作成した共有インスタンスを使ってプリロード（ユーザー操作の文脈で再生）
+          await notificationSound.play()
+          // 再生が成功した場合は即停止
+          notificationSound.pause()
+          notificationSound.currentTime = 0
+          console.log('通知用サウンドのプリロードに成功')
+        } catch (e) {
+          // 再生がブロックされても問題ない。ログだけ残す。
+          console.warn('通知サウンドのプリロードがブロックされました', e)
+          // 代替で WebAudio を鳴らしてユーザーにフィードバックを与える
+          try { playFallbackBeep() } catch (_) { /* ignore */ }
+        }
       }
     } else {
       dialog.alert('ブラウザの設定で通知がブロックされています。')
@@ -423,8 +484,44 @@ const calendarDays = computed(() => {
 })
 const selectCalendarDate = (day: any) => { if (!day.isCurrentMonth) return; const newDate = new Date(selectedDate.value); newDate.setDate(day.day); selectedDate.value = newDate }
 
-onMounted(() => { initData() })
-onUnmounted(() => { if (unsubscribe) unsubscribe() })
+onMounted(() => {
+  initData()
+
+  // Register a single foreground onMessage handler for FCM so admin sees alerts
+  // even when they're viewing a different date. Keep unregister function in module scope.
+  if (!unregisterFcmOnMessage) {
+    const fcmHandler = (payload: any) => {
+      console.log('Foreground FCM message received', payload)
+      try {
+        const title = payload.notification?.title || payload.data?.title
+        const body = payload.notification?.body || payload.data?.body
+        if (title || body) {
+          notificationSound.play()
+            .then(() => console.log('チャイム再生成功 (fcm)'))
+            .catch(e => {
+              console.warn('チャイム再生ブロック (fcm)', e)
+              playFallbackBeep()
+            })
+
+          dialog.alert(body || '', title || 'お知らせ')
+        }
+      } catch (e) {
+        console.error('Foreground message processing failed', e)
+      }
+    }
+
+    try {
+      unregisterFcmOnMessage = onMessage(messaging, fcmHandler) as unknown as () => void
+    } catch (e) {
+      console.warn('onMessage registration failed', e)
+    }
+  }
+})
+
+onUnmounted(() => {
+  try { if (unsubscribe) unsubscribe() } catch (_) { }
+  try { if (unregisterFcmOnMessage) unregisterFcmOnMessage() } catch (_) { }
+})
 </script>
 
 <template>
