@@ -269,69 +269,6 @@ const handleAuth = async () => {
     </p>
   </div>
 </template>
-if (isMobile) {
-await signInWithRedirect(auth, provider)
-} else {
-const result = await signInWithPopup(auth, provider)
-if (result.user) {
-await createCustomerData(result.user, 'google')
-router.push('/')
-}
-}
-// popup 成功または redirect 前に処理が抜けるため socialAuth をクリア
-socialAuth.value = null
-} catch (error: any) {
-console.error(error)
-message.value = `Googleログイン失敗: ${error.message}`
-loading.value = false
-socialAuth.value = null
-}
-}
-    <div v-if="miniAppLoading" class="loading-text">LINE連携を確認中...</div>
-
-    <div class="social-login">
-      <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">
-        <span class="line-icon">L</span> LINEアカウントでログイン
-      </button>
-      <button v-else class="google-btn" @click="loginWithGoogle" :disabled="loading">
-        <span class="g-icon">G</span> Googleでログイン
-      </button>
-    </div>
-
-    <!-- 認証中オーバーレイ（LINE / Google 用） -->
-    <div v-if="socialAuth" class="auth-overlay" aria-live="polite">
-      <div class="auth-overlay-inner">
-        <div class="spinner" aria-hidden="true"></div>
-        <div class="overlay-text">{{ socialAuth === 'line' ? 'LINEで認証中...' : 'Googleで認証中...' }}</div>
-      </div>
-    </div>
-
-    <div class="divider"><span>または 電話番号</span></div>
-
-    <form @submit.prevent="handleAuth" class="auth-form">
-      <div class="form-group">
-        <label>電話番号 (ハイフンなし)</label>
-        <input type="tel" v-model="phoneNumber" placeholder="09012345678" required pattern="[0-9]*" />
-      </div>
-      <div class="form-group">
-        <label>パスワード</label>
-        <input type="password" v-model="password" placeholder="6文字以上" required minlength="6" />
-      </div>
-      <button type="submit" class="submit-btn" :disabled="loading">
-        {{ loading ? '処理中...' : (isLoginMode ? 'ログイン' : '登録する') }}
-      </button>
-    </form>
-
-    <p v-if="message" class="message">{{ message }}</p>
-
-    <p class="toggle-mode">
-      {{ isLoginMode ? '初めての方はこちら' : 'すでにアカウントをお持ちの方' }}
-      <a href="#" @click.prevent="isLoginMode = !isLoginMode">
-        {{ isLoginMode ? '新規登録' : 'ログイン' }}
-      </a>
-    </p>
-  </div>
-</template>
 
 <style scoped>
 /* CSSは前回と同じ */
