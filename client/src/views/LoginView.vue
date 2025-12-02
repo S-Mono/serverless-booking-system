@@ -287,42 +287,6 @@ loading.value = false
 socialAuth.value = null
 }
 }
-
-// 📞 電話番号認証
-const handleAuth = async () => {
-loading.value = true
-message.value = ''
-try {
-await setPersistence(auth, browserLocalPersistence)
-const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
-let user: User
-if (isLoginMode.value) {
-const cred = await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
-user = cred.user
-} else {
-const cred = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
-user = cred.user
-}
-await createCustomerData(user, 'phone')
-router.push('/')
-} catch (error: any) {
-console.error(error)
-if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
-else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code ===
-'auth/invalid-credential') message.value = '電話番号またはパスワードが違います'
-else if (error.code === 'auth/email-already-in-use') message.value = 'この電話番号は既に登録されています'
-else if (error.code === 'auth/weak-password') message.value = 'パスワードは6文字以上で設定してください'
-else message.value = `エラー: ${error.message}`
-} finally {
-loading.value = false
-}
-}
-</script>
-
-<template>
-  <div class="auth-container">
-    <h2>{{ isLoginMode ? 'ログイン' : '新規会員登録' }}</h2>
-
     <div v-if="miniAppLoading" class="loading-text">LINE連携を確認中...</div>
 
     <div class="social-login">
