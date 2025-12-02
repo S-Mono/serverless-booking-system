@@ -359,12 +359,12 @@ const requestNotificationPermission = async () => {
         } else {
           console.log('requestNotificationPermission - token already exists in DB')
         }
-        
+
         // 状態を更新してlocalStorageに保存
         isNotifyEnabled.value = true
         localStorage.setItem(NOTIFICATION_STATUS_KEY, 'true')
         localStorage.setItem(NOTIFICATION_TOKEN_KEY, token)
-        
+
         dialog.alert('この端末での通知を【ON】にしました！')
         // ユーザーが通知を有効にした直後は「ユーザー操作」とみなされるため
         // このタイミングで一度音を再生しておくと、今後の非同期通知再生で
@@ -422,12 +422,12 @@ const turnOffNotification = async () => {
     if (token) {
       // DBから削除
       await deleteDoc(doc(db, 'admin_tokens', token))
-      
+
       // 状態を更新してlocalStorageからも削除
       isNotifyEnabled.value = false
       localStorage.removeItem(NOTIFICATION_STATUS_KEY)
       localStorage.removeItem(NOTIFICATION_TOKEN_KEY)
-      
+
       console.log('Notification turned off and localStorage cleared')
       dialog.alert('この端末での通知を【OFF】にしました。')
     }
