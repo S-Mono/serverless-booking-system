@@ -25,7 +25,7 @@ const loading = ref(false)
 const message = ref('')
 // social 認証専用の状態 (google | line) を保持します。
 const socialAuth = ref<string | null>(null)
-const liffLoading = ref(true)
+const miniAppLoading = ref(true)
 const isLineApp = ref(false)
 
 const PSEUDO_DOMAIN = '@local.booking-system'
@@ -70,40 +70,43 @@ onMounted(async () => {
     }
   }
 
-  // 3. LIFF初期化 (ローカル環境ではスキップして警告を消す)
-  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-    console.log('Localhost detected: Skipping LIFF init')
-    liffLoading.value = false
-  } else {
-    // 本番環境のみ実行
-    try {
-      const liffId = import.meta.env.VITE_LIFF_ID
-      if (liffId) {
-        await liff.init({ liffId })
-        if (liff.isInClient()) {
-          isLineApp.value = true
+  // 3. LINEミニアプリ初期化
+  try {
+    const miniAppId = import.meta.env.VITE_MINI_APP_ID
+    if (miniAppId) {
+      console.log('Initializing LINE Mini App:', miniAppId)
+      await liff.init({ liffId: miniAppId })
+
+      if (liff.isInClient()) {
+        isLineApp.value = true
+        console.log('Running in LINE app')
+
+        // ミニアプリは自動ログイン状態のため、すぐに認証処理
+        if (liff.isLoggedIn()) {
+          console.log('Already logged in, attempting auto-login...')
+          // 自動ログイン処理を実行
+          await autoLoginWithLine()
         }
       }
-    } catch (error) {
-      console.error('LIFF init failed', error)
-    } finally {
-      liffLoading.value = false
+    } else {
+      console.warn('VITE_MINI_APP_ID is not defined')
     }
+  } catch (error) {
+    console.error('LINE Mini App init failed', error)
+  } finally {
+    miniAppLoading.value = false
   }
 })
 
-// 🟢 LINEログイン (LIFF)
-const loginWithLine = async () => {
-  // 状態をセットしてオーバーレイを出す
-  socialAuth.value = 'line'
-  message.value = 'LINEアカウントを確認中...'
-  if (!liff.isLoggedIn()) {
-    // LIFF のログインは別ウィンドウへ遷移するため、ここで loading を true のままにしておく
-    liff.login()
-    return
-  }
-  loading.value = true
+/**
+ * LINEミニアプリ自動ログイン
+ * ミニアプリ起動時に既にログイン状態の場合、自動的にFirebase認証
+ */
+const autoLoginWithLine = async () => {
   try {
+    socialAuth.value = 'line'
+    message.value = 'LINEアカウントで認証中...'
+
     await setPersistence(auth, browserLocalPersistence)
     const profile = await liff.getProfile()
     const lineUserId = profile.userId
@@ -115,25 +118,45 @@ const loginWithLine = async () => {
     try {
       const cred = await signInWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
       user = cred.user
+      console.log('LINE user signed in:', user.uid)
     } catch (error: any) {
       if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+        console.log('Creating new LINE user...')
         const cred = await createUserWithEmailAndPassword(auth, firebaseEmail, firebasePassword)
         user = cred.user
       } else {
         throw error
       }
     }
+
     await createCustomerData(user, 'line', lineName)
+
     // 成功時はオーバーレイをクリアしてから遷移
     socialAuth.value = null
-    loading.value = false
     router.push('/')
   } catch (error: any) {
-    console.error(error)
-    message.value = `LINEログイン失敗: ${error.message}`
-    loading.value = false
+    console.error('Auto login failed:', error)
+    message.value = `LINE自動ログイン失敗: ${error.message}`
     socialAuth.value = null
   }
+}
+
+/**
+ * 🟢 LINEログイン（手動ボタン押下時）
+ * ミニアプリでは通常不要だが、フォールバック用に残す
+ */
+const loginWithLine = async () => {
+  socialAuth.value = 'line'
+  message.value = 'LINEアカウントを確認中...'
+
+  if (!liff.isLoggedIn()) {
+    console.log('Not logged in, redirecting to LINE login...')
+    liff.login()
+    return
+  }
+
+  // 既にログイン済みの場合は自動ログイン処理と同じ
+  await autoLoginWithLine()
 }
 
 // 🔵 Googleログイン
@@ -201,7 +224,106 @@ const handleAuth = async () => {
   <div class="auth-container">
     <h2>{{ isLoginMode ? 'ログイン' : '新規会員登録' }}</h2>
 
-    <div v-if="liffLoading" class="loading-text">LINE連携を確認中...</div>
+    <div v-if="miniAppLoading" class="loading-text">LINE連携を確認中...</div>
+
+    <div class="social-login">
+      <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">
+        <span class="line-icon">L</span> LINEアカウントでログイン
+      </button>
+      <button v-else class="google-btn" @click="loginWithGoogle" :disabled="loading">
+        <span class="g-icon">G</span> Googleでログイン
+      </button>
+    </div>
+
+    <!-- 認証中オーバーレイ（LINE / Google 用） -->
+    <div v-if="socialAuth" class="auth-overlay" aria-live="polite">
+      <div class="auth-overlay-inner">
+        <div class="spinner" aria-hidden="true"></div>
+        <div class="overlay-text">{{ socialAuth === 'line' ? 'LINEで認証中...' : 'Googleで認証中...' }}</div>
+      </div>
+    </div>
+
+    <div class="divider"><span>または 電話番号</span></div>
+
+    <form @submit.prevent="handleAuth" class="auth-form">
+      <div class="form-group">
+        <label>電話番号 (ハイフンなし)</label>
+        <input type="tel" v-model="phoneNumber" placeholder="09012345678" required pattern="[0-9]*" />
+      </div>
+      <div class="form-group">
+        <label>パスワード</label>
+        <input type="password" v-model="password" placeholder="6文字以上" required minlength="6" />
+      </div>
+      <button type="submit" class="submit-btn" :disabled="loading">
+        {{ loading ? '処理中...' : (isLoginMode ? 'ログイン' : '登録する') }}
+      </button>
+    </form>
+
+    <p v-if="message" class="message">{{ message }}</p>
+
+    <p class="toggle-mode">
+      {{ isLoginMode ? '初めての方はこちら' : 'すでにアカウントをお持ちの方' }}
+      <a href="#" @click.prevent="isLoginMode = !isLoginMode">
+        {{ isLoginMode ? '新規登録' : 'ログイン' }}
+      </a>
+    </p>
+  </div>
+</template>
+if (isMobile) {
+await signInWithRedirect(auth, provider)
+} else {
+const result = await signInWithPopup(auth, provider)
+if (result.user) {
+await createCustomerData(result.user, 'google')
+router.push('/')
+}
+}
+// popup 成功または redirect 前に処理が抜けるため socialAuth をクリア
+socialAuth.value = null
+} catch (error: any) {
+console.error(error)
+message.value = `Googleログイン失敗: ${error.message}`
+loading.value = false
+socialAuth.value = null
+}
+}
+
+// 📞 電話番号認証
+const handleAuth = async () => {
+loading.value = true
+message.value = ''
+try {
+await setPersistence(auth, browserLocalPersistence)
+const pseudoEmail = `${phoneNumber.value}${PSEUDO_DOMAIN}`
+let user: User
+if (isLoginMode.value) {
+const cred = await signInWithEmailAndPassword(auth, pseudoEmail, password.value)
+user = cred.user
+} else {
+const cred = await createUserWithEmailAndPassword(auth, pseudoEmail, password.value)
+user = cred.user
+}
+await createCustomerData(user, 'phone')
+router.push('/')
+} catch (error: any) {
+console.error(error)
+if (error.code === 'auth/invalid-email') message.value = '電話番号の形式が正しくありません'
+else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code ===
+'auth/invalid-credential') message.value = '電話番号またはパスワードが違います'
+else if (error.code === 'auth/email-already-in-use') message.value = 'この電話番号は既に登録されています'
+else if (error.code === 'auth/weak-password') message.value = 'パスワードは6文字以上で設定してください'
+else message.value = `エラー: ${error.message}`
+} finally {
+loading.value = false
+}
+}
+</script>
+
+<template>
+  <div class="auth-container">
+    <h2>{{ isLoginMode ? 'ログイン' : '新規会員登録' }}</h2>
+
+    <div v-if="miniAppLoading" class="loading-text">LINE連携を確認中...</div>
 
     <div class="social-login">
       <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">
