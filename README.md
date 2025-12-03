@@ -1,5 +1,5 @@
 # serverless-booking-system
-サーバーレス予約システムのリポジトリ
+サーバーレス予約システムのリポジトリです
 
 IMPORTANT SECURITY NOTE
 -----------------------
