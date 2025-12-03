@@ -7,6 +7,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import { useUserStore } from './stores/user'
 import { useLineAuthStore } from './stores/lineAuth'
 import ConfirmDialog from './components/ConfirmDialog.vue'
+import AppFooter from './components/AppFooter.vue'
 
 const userStore = useUserStore()
 const lineAuthStore = useLineAuthStore()
@@ -84,7 +85,7 @@ const goToMessages = () => {
     <header>
       <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
         <h1>
-          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 美理容予約</RouterLink>
+          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 ヘアーサロン Joy's 予約</RouterLink>
         </h1>
 
         <div v-if="userStore.user && !isAdminPage" class="header-actions">
@@ -117,6 +118,8 @@ const goToMessages = () => {
     <main :class="[isAdminPage ? 'container-fluid' : 'container']">
       <RouterView />
     </main>
+
+    <AppFooter v-if="!isAdminPage" />
   </div>
 </template>
 

@@ -69,6 +69,17 @@ const router = createRouter({
       name: 'admin-customers-trash',
       component: () => import('../views/AdminDeletedCustomersView.vue'),
       meta: { requiresAdmin: true }
+    },
+    // 利用規約・プライバシーポリシー
+    {
+      path: '/terms',
+      name: 'terms',
+      component: () => import('../views/TermsOfServiceView.vue')
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: () => import('../views/PrivacyPolicyView.vue')
     }
   ]
 })
