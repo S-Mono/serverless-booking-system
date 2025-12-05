@@ -70,16 +70,12 @@ const router = createRouter({
       component: () => import('../views/AdminDeletedCustomersView.vue'),
       meta: { requiresAdmin: true }
     },
-    // 利用規約・プライバシーポリシー
+    // 👇 追加: 売上分析画面
     {
-      path: '/terms',
-      name: 'terms',
-      component: () => import('../views/TermsOfServiceView.vue')
-    },
-    {
-      path: '/privacy',
-      name: 'privacy',
-      component: () => import('../views/PrivacyPolicyView.vue')
+      path: '/admin/sales',
+      name: 'admin-sales',
+      component: () => import('../views/AdminSalesView.vue'),
+      meta: { requiresAdmin: true }
     }
   ]
 })
