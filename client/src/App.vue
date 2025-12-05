@@ -7,7 +7,6 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import { useUserStore } from './stores/user'
 import { useLineAuthStore } from './stores/lineAuth'
 import ConfirmDialog from './components/ConfirmDialog.vue'
-import AppFooter from './components/AppFooter.vue'
 
 const userStore = useUserStore()
 const lineAuthStore = useLineAuthStore()
@@ -16,24 +15,43 @@ const route = useRoute()
 
 const isMenuOpen = ref(false)
 const isAdminPage = computed(() => route.path.startsWith('/admin'))
-const customerName = ref('')
 const unreadCount = ref(0) // 👈 未読数
 
 // ユーザー名取得
 const fetchCustomerName = async (user: any) => {
-  if (!user) { customerName.value = ''; return }
+  if (!user) { userStore.setCustomerName(''); return }
   try {
-    // 名前取得ロジック (既存のまま)
-    // ... (省略せずに実装します) ...
-    const { getDocs } = await import('firebase/firestore')
-    let q = query(collection(db, 'customers'), where('id', '==', user.uid))
+    const { getDoc, doc, getDocs } = await import('firebase/firestore')
+    // まずUIDで直接取得を試す
+    const docRef = doc(db, 'customers', user.uid)
+    const docSnap = await getDoc(docRef)
+    
+    if (docSnap.exists()) {
+      const data = docSnap.data()
+      // 漢字名があればそれを優先、なければカナを使用
+      const name = data.name_kanji || data.name_kana || 'ゲスト'
+      userStore.setCustomerName(name)
+      return
+    }
+    
+    // なければ電話番号で名寄せ
     const phone = user.email?.split('@')[0]
-    if (phone) q = query(collection(db, 'customers'), where('phone_number', '==', phone))
-
-    const snapshot = await getDocs(q)
-    if (!snapshot.empty) customerName.value = snapshot.docs[0]!.data().name_kana
-    else customerName.value = 'ゲスト'
-  } catch (e) { customerName.value = 'ゲスト' }
+    if (phone) {
+      const q = query(collection(db, 'customers'), where('phone_number', '==', phone))
+      const snapshot = await getDocs(q)
+      if (!snapshot.empty) {
+        const data = snapshot.docs[0]!.data()
+        const name = data.name_kanji || data.name_kana || 'ゲスト'
+        userStore.setCustomerName(name)
+        return
+      }
+    }
+    
+    userStore.setCustomerName('ゲスト')
+  } catch (e) { 
+    console.error('顧客名取得エラー:', e)
+    userStore.setCustomerName('ゲスト') 
+  }
 }
 
 // 🔔 未読数の監視 (リアルタイム)
@@ -55,7 +73,7 @@ onMounted(async () => {
       unsubscribeMessages = subscribeUnread(user.uid) // 監視開始
     } else {
       userStore.setUser(null)
-      customerName.value = ''
+      userStore.setCustomerName('')
       if (unsubscribeMessages) unsubscribeMessages() // 監視解除
     }
   })
@@ -68,7 +86,7 @@ const handleLogout = async () => {
   try {
     await signOut(auth)
     closeMenu()
-    customerName.value = ''
+    userStore.setCustomerName('')
     router.push('/login')
   } catch (error) { console.error(error) }
 }
@@ -85,7 +103,7 @@ const goToMessages = () => {
     <header>
       <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
         <h1>
-          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 ヘアーサロン Joy's 予約</RouterLink>
+          <RouterLink to="/" class="logo-link" @click="closeMenu">💈 美理容予約</RouterLink>
         </h1>
 
         <div v-if="userStore.user && !isAdminPage" class="header-actions">
@@ -101,7 +119,7 @@ const goToMessages = () => {
 
         <nav class="nav-menu" :class="{ open: isMenuOpen }">
           <div v-if="userStore.user" class="menu-group">
-            <span class="user-welcome">ようこそ {{ customerName || 'ゲスト' }} 様</span>
+            <span class="user-welcome">ようこそ {{ userStore.customerName || 'ゲスト' }} 様</span>
             <button class="nav-item bell-menu-item" @click="goToMessages">
               お知らせ <span v-if="unreadCount > 0" class="badge-inline">{{ unreadCount }}</span>
             </button>
@@ -118,8 +136,6 @@ const goToMessages = () => {
     <main :class="[isAdminPage ? 'container-fluid' : 'container']">
       <RouterView />
     </main>
-
-    <AppFooter v-if="!isAdminPage" />
   </div>
 </template>
 
