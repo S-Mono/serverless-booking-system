@@ -207,9 +207,11 @@ const sendContactForm = async () => {
     dialog.alert('お問い合わせを送信しました。\n折り返しご連絡いたしますので、しばらくお待ちください。', '送信完了')
     contactMessage.value = ''
     isContactFormOpen.value = false
-  } catch (error) {
+  } catch (error: any) {
     console.error('お問い合わせ送信エラー:', error)
-    dialog.alert('送信に失敗しました。時間をおいて再度お試しください。', 'エラー')
+    const errorMessage = error?.message || '不明なエラー'
+    const errorCode = error?.code || ''
+    dialog.alert(`送信に失敗しました。\nエラー: ${errorCode}\n${errorMessage}\n\n時間をおいて再度お試しください。`, 'エラー')
   } finally {
     isSendingContact.value = false
   }
