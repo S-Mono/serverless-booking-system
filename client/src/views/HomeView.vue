@@ -241,14 +241,14 @@ watch([reservationDate, selectedStaffId, selectedMenus], () => { fetchAvailableS
 
 const openBookingModal = () => {
   if (selectedMenus.value.length === 0) return dialog.alert('メニューを選択してください')
-  
+
   // 🔴 名前と電話番号の必須チェック（ダイアログを開く前）
   if (!customerProfile.value?.name_kana || customerProfile.value.name_kana.trim() === '' ||
-      !customerProfile.value?.phone_number || customerProfile.value.phone_number.trim() === '') {
+    !customerProfile.value?.phone_number || customerProfile.value.phone_number.trim() === '') {
     dialog.alert('マイページでお名前と電話番号を登録してから予約してください。', '名前・電話番号未登録')
     return
   }
-  
+
   if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0]!.id; else selectedStaffId.value = ''
   const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
   reservationDate.value = now.toISOString().slice(0, 16)
@@ -428,11 +428,11 @@ const submitReservation = async () => {
 </template>
 
 <style scoped>
-/* コンテナを縦flexにし、高さを固定（ヘッダー60px分引く） */
+/* コンテナを縦flexにし、高さを固定（ヘッダー60px + フッター80px分引く） */
 .home-container {
   max-width: 1024px;
   margin: 0 auto;
-  height: calc(100vh - 60px);
+  height: calc(100vh - 60px - 80px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
