@@ -79,7 +79,7 @@ const availableMenus = computed(() => {
     return menus.value // スタッフ未選択時は全メニュー表示
   }
   // 選択されたスタッフが対応可能なメニューのみ
-  return menus.value.filter(menu => 
+  return menus.value.filter(menu =>
     menu.available_staff_ids?.includes(newReservation.value.staff_id)
   )
 })
@@ -1278,7 +1278,7 @@ const exportReservationsToExcel = async () => {
           <input type="tel" v-model="newReservation.customer_phone" @input="handlePhoneInput"
             :class="{ 'input-error': validationErrors.customer_phone }" placeholder="例: 090-1234-5678">
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-          }}</span>
+            }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
