@@ -103,7 +103,17 @@ const goToMessages = () => {
   <div v-if="lineAuthStore.isInitializing" class="app-loading">
     <img src="/LINE_spinner_dark.svg" alt="読み込み中" class="loading-spinner" />
     <p class="loading-text">読み込み中...</p>
-    <p v-if="lineAuthStore.error" class="error-text">{{ lineAuthStore.error }}</p>
+    <p v-if="lineAuthStore.error" class="error-text">
+      {{ lineAuthStore.error }}
+    </p>
+    <!-- デバッグ情報 -->
+    <div class="debug-info">
+      <p style="font-size: 12px; color: #fff; margin-top: 20px;">
+        URL: {{ window.location.href }}<br>
+        LIFF ID: {{ import.meta.env.VITE_MINI_APP_ID || '未設定' }}<br>
+        UserAgent: {{ navigator.userAgent.includes('Line') ? 'LINE' : 'ブラウザ' }}
+      </p>
+    </div>
   </div>
 
   <!-- メインコンテンツ -->
