@@ -21,7 +21,7 @@ interface Staff { id: string; name: string; color?: string }
 interface Reservation {
   id: string; start_at: Timestamp; end_at: Timestamp; staff_id: string
   customer_id?: string; // 👈 追加
-  customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number }[]; status: string; source?: 'web' | 'phone'; note?: string
+  customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number; price?: number }[]; status: string; source?: 'web' | 'phone'; note?: string; total_price?: number; total_duration_min?: number
 }
 interface Menu { id: string; title: string; duration_min: number; price: number }
 interface ShopConfig { holiday_weekdays: number[]; closed_dates: string[]; business_hours: { start: string; end: string }; tax_rate: number }
@@ -453,6 +453,47 @@ const turnOffNotification = async () => {
   }
 }
 
+// 電話番号フォーマット（ハイフン自動補完）
+const formatPhoneNumber = (value: string) => {
+  // 数字のみ抽出
+  const numbers = value.replace(/[^0-9]/g, '')
+
+  // 桁数に応じてフォーマット
+  if (numbers.length <= 3) {
+    return numbers
+  } else if (numbers.length <= 6) {
+    // 3-3 or 3-4
+    return `${numbers.slice(0, 3)}-${numbers.slice(3)}`
+  } else if (numbers.length === 7) {
+    // 7桁: 000-0000 (固定電話)
+    return `${numbers.slice(0, 3)}-${numbers.slice(3)}`
+  } else if (numbers.length === 8) {
+    // 8桁: 0000-0000 (4-4形式)
+    return `${numbers.slice(0, 4)}-${numbers.slice(4)}`
+  } else if (numbers.length === 9) {
+    // 9桁: 000-000-000 または 0000-0-0000 → 一般的なのは 000-000-000
+    return `${numbers.slice(0, 3)}-${numbers.slice(3, 6)}-${numbers.slice(6)}`
+  } else if (numbers.length === 10) {
+    // 10桁: 000-000-0000 (携帯/固定)
+    // 先頭が090,080,070などなら携帯形式
+    if (['090', '080', '070', '050'].includes(numbers.slice(0, 3))) {
+      return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7)}`
+    } else {
+      // 固定電話の場合 (0X-XXXX-XXXX または 0XX-XXX-XXXX)
+      return `${numbers.slice(0, 3)}-${numbers.slice(3, 6)}-${numbers.slice(6)}`
+    }
+  } else if (numbers.length >= 11) {
+    // 11桁: 000-0000-0000 (携帯)
+    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`
+  }
+  return numbers
+}
+
+const handlePhoneInput = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  newReservation.value.customer_phone = formatPhoneNumber(input.value)
+}
+
 const submitReservation = async () => {
   // バリデーションエラーをリセット
   validationErrors.value = {
@@ -542,6 +583,25 @@ const deleteReservation = async (id: string) => {
 
 // 🟢 予約確定 (メッセージ作成機能付き)
 const approveReservation = async (res: Reservation) => {
+  // 🟢 予約内容の確認ダイアログ
+  const startDate = res.start_at.toDate()
+  const dateStr = startDate.toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    weekday: 'short'
+  })
+  const staffName = getStaffName(res.staff_id)
+  const menuList = res.menu_items.map(m => `  ${m.title} (${m.duration}分)${m.price ? ` - ¥${m.price.toLocaleString()}` : ''}`).join('\n')
+  const totalPrice = res.total_price ? `¥${res.total_price.toLocaleString()}` : '未設定'
+  const totalDuration = res.total_duration_min ? `${res.total_duration_min}分` : '未設定'
+  const confirmMessage = `この内容で予約を確定します。\nよろしいでしょうか？\n\n【予約内容】\n日時: ${dateStr}\nお客様: ${res.customer_name}\n担当: ${staffName}\nメニュー:\n${menuList}\n\n合計: ${totalPrice} (${totalDuration})`
+
+  const confirmed = await dialog.open(confirmMessage, { title: '予約確認', type: 'normal', cancelText: 'いいえ', confirmText: 'はい' })
+  if (!confirmed) return
+
   try {
     // 1. ステータス更新
     await updateDoc(doc(db, 'reservations', res.id), { status: 'confirmed' })
@@ -1204,10 +1264,10 @@ const exportReservationsToExcel = async () => {
         </div>
         <div class="form-group">
           <label>電話番号 <span style="color: #e74c3c;">*</span></label>
-          <input type="tel" v-model="newReservation.customer_phone"
-            :class="{ 'input-error': validationErrors.customer_phone }" placeholder="09012345678">
+          <input type="tel" v-model="newReservation.customer_phone" @input="handlePhoneInput"
+            :class="{ 'input-error': validationErrors.customer_phone }" placeholder="例: 090-1234-5678">
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-            }}</span>
+          }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>

@@ -29,6 +29,59 @@ const phoneNumber = ref('') // 電話番号
 const preferredCategory = ref('barber')
 const isSavingProfile = ref(false)
 const isProfileOpen = ref(false) // お客様情報の開閉状態
+const isCancellingReservation = ref(false) // 予約キャンセル中フラグ
+
+// 電話番号フォーマット（ハイフン自動補完）
+const formatPhoneNumber = (value: string) => {
+  // 数字のみ抽出
+  const numbers = value.replace(/[^0-9]/g, '')
+
+  // 桁数に応じてフォーマット
+  if (numbers.length <= 3) {
+    return numbers
+  } else if (numbers.length <= 6) {
+    // 3-3 or 3-4
+    return `${numbers.slice(0, 3)}-${numbers.slice(3)}`
+  } else if (numbers.length === 7) {
+    // 7桁: 000-0000 (固定電話)
+    return `${numbers.slice(0, 3)}-${numbers.slice(3)}`
+  } else if (numbers.length === 8) {
+    // 8桁: 0000-0000 (4-4形式)
+    return `${numbers.slice(0, 4)}-${numbers.slice(4)}`
+  } else if (numbers.length === 9) {
+    // 9桁: 000-000-000 または 0000-0-0000 → 一般的なのは 000-000-000
+    return `${numbers.slice(0, 3)}-${numbers.slice(3, 6)}-${numbers.slice(6)}`
+  } else if (numbers.length === 10) {
+    // 10桁: 000-000-0000 (携帯/固定)
+    // 先頭が090,080,070などなら携帯形式
+    if (['090', '080', '070', '050'].includes(numbers.slice(0, 3))) {
+      return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7)}`
+    } else {
+      // 固定電話の場合 (0X-XXXX-XXXX または 0XX-XXX-XXXX)
+      return `${numbers.slice(0, 3)}-${numbers.slice(3, 6)}-${numbers.slice(6)}`
+    }
+  } else if (numbers.length >= 11) {
+    // 11桁: 000-0000-0000 (携帯)
+    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`
+  }
+  return numbers
+}
+
+const handlePhoneInput = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const cursorPos = input.selectionStart || 0
+  const oldValue = phoneNumber.value
+  const newValue = formatPhoneNumber(input.value)
+
+  phoneNumber.value = newValue
+
+  // カーソル位置を調整
+  if (newValue.length > oldValue.length && (newValue[cursorPos] === '-' || newValue[cursorPos - 1] === '-')) {
+    setTimeout(() => {
+      input.setSelectionRange(cursorPos + 1, cursorPos + 1)
+    }, 0)
+  }
+}
 
 // お問い合わせフォーム
 const isContactFormOpen = ref(false)
@@ -38,9 +91,18 @@ const isSendingContact = ref(false)
 const fetchReservations = async (userId: string) => {
   loading.value = true
   try {
-    const q = query(collection(db, 'reservations'), where('customer_id', '==', userId))
+    // 本日00:00以降の予約のみ取得
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const q = query(
+      collection(db, 'reservations'),
+      where('customer_id', '==', userId),
+      where('start_at', '>=', Timestamp.fromDate(today))
+    )
     const querySnapshot = await getDocs(q)
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+    // JavaScript側でソート
     reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
 
     // プロフィール取得 (UID優先)
@@ -135,7 +197,7 @@ const saveProfile = async () => {
 }
 
 const cancelReservation = async (id: string) => {
-  const ok = await dialog.confirm('キャンセルしますか？')
+  const ok = await dialog.open('キャンセルしますか？', { title: '確認', type: 'normal', cancelText: 'いいえ', confirmText: 'はい' })
   if (!ok) return
   try {
     // 1. 予約自体の削除 (既存処理)
@@ -236,6 +298,7 @@ const formatDate = (ts: Timestamp) => {
 
 // 退会処理
 const isDeletingAccount = ref(false)
+const isDeleteAccountOpen = ref(false) // 退会セクションの開閉状態
 
 const deleteAccount = async () => {
   // 二重確認
@@ -311,7 +374,7 @@ const deleteAccount = async () => {
               <div class="form-group">
                 <label>電話番号<span class="required">*</span></label>
                 <div class="input-row">
-                  <input type="tel" v-model="phoneNumber" placeholder="例: 090-1234-5678" />
+                  <input type="tel" v-model="phoneNumber" @input="handlePhoneInput" placeholder="例: 090-1234-5678" />
                 </div>
                 <p class="hint">※ 予約時に必要となります。</p>
               </div>
@@ -339,33 +402,46 @@ const deleteAccount = async () => {
           </div>
 
           <!-- 予約状況 -->
-          <div class="card reservation-container">
+          <div class="card reservations-card">
             <h3>予約状況</h3>
-            <p v-if="loading" class="loading">読み込み中...</p>
-            <div v-else>
-              <div v-if="reservations.length === 0" class="no-data">
-                <p>現在、予約はありません。</p>
-                <router-link to="/" class="book-link">予約を入れる</router-link>
-              </div>
-              <ul v-else class="reservation-list">
-                <li v-for="res in reservations" :key="res.id" class="reservation-item">
-                  <div class="res-header">
-                    <span class="date">{{ formatDate(res.start_at) }}</span>
-                    <span v-if="res.status === 'confirmed'" class="status-badge confirmed">予約確定</span>
-                    <span v-else-if="res.status === 'pending'" class="status-badge pending">お店の確認待ち</span>
-                  </div>
-                  <div class="res-body">
-                    <div v-for="(item, index) in res.menu_items" :key="index" class="menu-item">
-                      <span class="menu-title">{{ item.title }}</span>
-                      <span v-if="item.price" class="menu-price">¥{{ item.price.toLocaleString() }}</span>
-                    </div>
-                  </div>
-                  <div class="res-footer">
-                    <button class="cancel-btn" @click="cancelReservation(res.id)">キャンセル</button>
-                  </div>
-                </li>
-              </ul>
+            <div v-if="loading" class="loading-state">
+              <p>読み込み中...</p>
             </div>
+            <div v-else-if="reservations.length === 0" class="empty-state">
+              <p>予約がありません</p>
+              <router-link to="/" class="book-now-btn">今すぐ予約する</router-link>
+            </div>
+            <ul v-else class="reservation-list">
+              <li v-for="reservation in reservations" :key="reservation.id" class="reservation-item"
+                :class="{ cancelled: reservation.status === 'cancelled' }">
+                <div class="reservation-header">
+                  <span class="reservation-date">
+                    {{ new Date(reservation.start_at.seconds * 1000).toLocaleString('ja-JP', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    }) }}
+                  </span>
+                  <span class="status-badge" :class="reservation.status">
+                    {{ reservation.status === 'confirmed' ? '予約済' :
+                      reservation.status === 'pending' ? '仮予約' : 'キャンセル済' }}
+                  </span>
+                </div>
+                <ul class="menu-list">
+                  <li v-for="(item, index) in reservation.menu_items" :key="index">
+                    {{ item.title }} - ¥{{ item.price.toLocaleString() }}
+                  </li>
+                </ul>
+                <div class="reservation-actions">
+                  <button v-if="reservation.status === 'confirmed'" @click="cancelReservation(reservation.id)"
+                    class="cancel-btn" :disabled="isCancellingReservation">
+                    {{ isCancellingReservation ? '処理中...' : 'キャンセル' }}
+                  </button>
+                </div>
+              </li>
+            </ul>
           </div>
 
           <!-- お問い合わせフォーム -->
@@ -401,10 +477,16 @@ const deleteAccount = async () => {
             </div>
           </div>
 
-          <!-- 退会セクション -->
+          <!-- 退会セクション（トグル形式） -->
           <div class="card danger-card">
-            <h3>アカウントの削除</h3>
-            <div class="danger-zone">
+            <div class="profile-header">
+              <h3>アカウントの削除</h3>
+              <button @click="isDeleteAccountOpen = !isDeleteAccountOpen" class="toggle-btn danger-toggle">
+                {{ isDeleteAccountOpen ? '▲ 閉じる' : '▼ 開く' }}
+              </button>
+            </div>
+
+            <div v-show="isDeleteAccountOpen" class="danger-zone">
               <p class="danger-note">
                 退会すると、以下の処理が実行されます：
               </p>
@@ -500,6 +582,14 @@ const deleteAccount = async () => {
   background: #2980b9;
 }
 
+.danger-toggle {
+  background: #e74c3c;
+}
+
+.danger-toggle:hover {
+  background: #c0392b;
+}
+
 .profile-form {
   animation: slideDown 0.3s ease-out;
 }
@@ -534,10 +624,20 @@ const deleteAccount = async () => {
 }
 
 .content-grid {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 2rem;
-  align-items: start;
+  display: block;
+  /* スマホ優先: 1カラムレイアウト */
+}
+
+@media (min-width: 768px) {
+  .content-grid {
+    display: flex;
+    justify-content: center;
+  }
+
+  .profile-column {
+    max-width: 700px;
+    width: 100%;
+  }
 }
 
 .card {
@@ -622,6 +722,11 @@ const deleteAccount = async () => {
 .save-btn:disabled {
   background: #ccc;
   cursor: not-allowed;
+}
+
+/* 予約状況 */
+.reservations-card {
+  margin-top: 1.5rem;
 }
 
 /* お問い合わせフォーム */
@@ -740,16 +845,17 @@ textarea:disabled {
 .reservation-item {
   border: 1px solid #eee;
   border-radius: 6px;
-  padding: 1rem;
+  padding: 1.25rem;
   background: #fcfcfc;
+  margin-bottom: 0.5rem;
 }
 
 .res-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.8rem;
-  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
   border-bottom: 1px dashed #eee;
 }
 
@@ -775,14 +881,18 @@ textarea:disabled {
   background: #e67e22;
 }
 
+.status-badge.cancelled {
+  background: #95a5a6;
+}
+
 .res-body {
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 
 .menu-item {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.5rem;
 }
 
 .menu-title {
@@ -860,11 +970,19 @@ textarea:disabled {
   text-align: right;
 }
 
+.reservation-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f0f0f0;
+}
+
 .cancel-btn {
   background: white;
   border: 1px solid #e74c3c;
   color: #e74c3c;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 1.5rem;
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
