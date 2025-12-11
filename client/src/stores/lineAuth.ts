@@ -26,6 +26,15 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
 
     isInitializing.value = true
 
+    // 🟢 タイムアウト処理（10秒で強制的に終了）
+    const timeoutId = setTimeout(() => {
+      if (isInitializing.value) {
+        console.error('LINE initialization timeout (10s)')
+        error.value = 'LINE初期化がタイムアウトしました。ページを更新してください。'
+        isInitializing.value = false
+      }
+    }, 10000)
+
     try {
       const miniAppId = import.meta.env.VITE_MINI_APP_ID
       if (!miniAppId) {
@@ -36,15 +45,19 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
         if (import.meta.env.DEV || import.meta.env.MODE === 'staging') {
           alert(errorMsg)
         }
+        clearTimeout(timeoutId)
         isInitializing.value = false
         return
       }
 
       console.log('Initializing LINE Mini App:', miniAppId)
+      console.log('Current URL:', window.location.href)
+      console.log('User Agent:', navigator.userAgent)
 
       // LINEミニアプリ初期化（LIFF SDKを使用）
       await liff.init({ liffId: miniAppId })
       
+      clearTimeout(timeoutId)
       isInitialized.value = true
 
       // LINEアプリ内かどうかの判定
@@ -67,6 +80,7 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
         console.log('Not running in LINE app (browser or other)')
       }
     } catch (err: any) {
+      clearTimeout(timeoutId)
       console.error('LINE Mini App init failed', err)
       error.value = err.message
       // エラー時もアラート表示
