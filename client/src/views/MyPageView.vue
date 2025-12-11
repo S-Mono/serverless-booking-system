@@ -236,6 +236,7 @@ const formatDate = (ts: Timestamp) => {
 
 // 退会処理
 const isDeletingAccount = ref(false)
+const isDeleteAccountOpen = ref(false) // 退会セクションの開閉状態
 
 const deleteAccount = async () => {
   // 二重確認
@@ -338,6 +339,48 @@ const deleteAccount = async () => {
             </div>
           </div>
 
+          <!-- 予約状況 -->
+          <div class="card reservations-card">
+            <h3>予約状況</h3>
+            <div v-if="loading" class="loading-state">
+              <p>読み込み中...</p>
+            </div>
+            <div v-else-if="reservations.length === 0" class="empty-state">
+              <p>予約がありません</p>
+              <router-link to="/" class="book-now-btn">今すぐ予約する</router-link>
+            </div>
+            <ul v-else class="reservation-list">
+              <li v-for="reservation in reservations" :key="reservation.id" class="reservation-item"
+                :class="{ cancelled: reservation.status === 'cancelled' }">
+                <div class="reservation-header">
+                  <span class="reservation-date">
+                    {{ new Date(reservation.start_at.seconds * 1000).toLocaleString('ja-JP', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    }) }}
+                  </span>
+                  <span class="status-badge" :class="reservation.status">
+                    {{ reservation.status === 'confirmed' ? '予約済' : 'キャンセル済' }}
+                  </span>
+                </div>
+                <ul class="menu-list">
+                  <li v-for="(item, index) in reservation.menu_items" :key="index">
+                    {{ item.title }} - ¥{{ item.price.toLocaleString() }}
+                  </li>
+                </ul>
+                <div class="reservation-actions">
+                  <button v-if="reservation.status === 'confirmed'" @click="cancelReservation(reservation.id)"
+                    class="cancel-btn">
+                    キャンセル
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </div>
+
           <!-- お問い合わせフォーム -->
           <div class="card contact-card">
             <div class="profile-header">
@@ -371,10 +414,16 @@ const deleteAccount = async () => {
             </div>
           </div>
 
-          <!-- 退会セクション -->
+          <!-- 退会セクション（トグル形式） -->
           <div class="card danger-card">
-            <h3>アカウントの削除</h3>
-            <div class="danger-zone">
+            <div class="profile-header">
+              <h3>アカウントの削除</h3>
+              <button @click="isDeleteAccountOpen = !isDeleteAccountOpen" class="toggle-btn danger-toggle">
+                {{ isDeleteAccountOpen ? '▲ 閉じる' : '▼ 開く' }}
+              </button>
+            </div>
+
+            <div v-show="isDeleteAccountOpen" class="danger-zone">
               <p class="danger-note">
                 退会すると、以下の処理が実行されます：
               </p>
@@ -390,37 +439,6 @@ const deleteAccount = async () => {
             </div>
           </div>
         </aside>
-
-        <main class="reservation-column">
-          <div class="card reservation-container">
-            <h3>予約状況</h3>
-            <p v-if="loading" class="loading">読み込み中...</p>
-            <div v-else>
-              <div v-if="reservations.length === 0" class="no-data">
-                <p>現在、予約はありません。</p>
-                <router-link to="/" class="book-link">予約を入れる</router-link>
-              </div>
-              <ul v-else class="reservation-list">
-                <li v-for="res in reservations" :key="res.id" class="reservation-item">
-                  <div class="res-header">
-                    <span class="date">{{ formatDate(res.start_at) }}</span>
-                    <span v-if="res.status === 'confirmed'" class="status-badge confirmed">予約確定</span>
-                    <span v-else-if="res.status === 'pending'" class="status-badge pending">お店の確認待ち</span>
-                  </div>
-                  <div class="res-body">
-                    <div v-for="(item, index) in res.menu_items" :key="index" class="menu-item">
-                      <span class="menu-title">{{ item.title }}</span>
-                      <span v-if="item.price" class="menu-price">¥{{ item.price.toLocaleString() }}</span>
-                    </div>
-                  </div>
-                  <div class="res-footer">
-                    <button class="cancel-btn" @click="cancelReservation(res.id)">キャンセル</button>
-                  </div>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </main>
       </div>
     </div>
   </div>
@@ -501,6 +519,14 @@ const deleteAccount = async () => {
   background: #2980b9;
 }
 
+.danger-toggle {
+  background: #e74c3c;
+}
+
+.danger-toggle:hover {
+  background: #c0392b;
+}
+
 .profile-form {
   animation: slideDown 0.3s ease-out;
 }
@@ -535,10 +561,20 @@ const deleteAccount = async () => {
 }
 
 .content-grid {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 2rem;
-  align-items: start;
+  display: block;
+  /* スマホ優先: 1カラムレイアウト */
+}
+
+@media (min-width: 768px) {
+  .content-grid {
+    display: flex;
+    justify-content: center;
+  }
+
+  .profile-column {
+    max-width: 700px;
+    width: 100%;
+  }
 }
 
 .card {
@@ -623,6 +659,11 @@ const deleteAccount = async () => {
 .save-btn:disabled {
   background: #ccc;
   cursor: not-allowed;
+}
+
+/* 予約状況 */
+.reservations-card {
+  margin-top: 1.5rem;
 }
 
 /* お問い合わせフォーム */
