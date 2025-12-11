@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { db, auth } from '../lib/firebase'
 import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc, updateDoc } from 'firebase/firestore'
-import { onAuthStateChanged } from 'firebase/auth'
+import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
@@ -355,7 +355,11 @@ const deleteAccount = async () => {
 
     await dialog.alert('退会処理が完了しました。\nご利用ありがとうございました。', '退会完了')
 
+    // ログアウトフラグを設定（5秒間自動ログインをスキップ）
+    localStorage.setItem('logout_flag', Date.now().toString())
+
     // ログアウトしてログイン画面へ
+    await signOut(auth)
     router.push('/login')
   } catch (error: any) {
     console.error('退会処理エラー:', error)
