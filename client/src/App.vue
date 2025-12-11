@@ -99,7 +99,15 @@ const goToMessages = () => {
 </script>
 
 <template>
-  <div class="app-layout" :class="{ 'admin-mode': isAdminPage }">
+  <!-- LINE初期化中のローディング画面 -->
+  <div v-if="lineAuthStore.isInitializing" class="app-loading">
+    <img src="/LINE_spinner_dark.svg" alt="読み込み中" class="loading-spinner" />
+    <p class="loading-text">読み込み中...</p>
+    <p v-if="lineAuthStore.error" class="error-text">{{ lineAuthStore.error }}</p>
+  </div>
+
+  <!-- メインコンテンツ -->
+  <div v-else class="app-layout" :class="{ 'admin-mode': isAdminPage }">
     <ConfirmDialog />
     <header>
       <div :class="['header-inner', isAdminPage ? 'container-fluid' : 'container']">
@@ -144,6 +152,40 @@ const goToMessages = () => {
 </template>
 
 <style scoped>
+/* ローディング画面 */
+.app-loading {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.loading-spinner {
+  width: 80px;
+  height: 80px;
+  /* LINE公式SVGスピナーはアニメーション内蔵 */
+}
+
+.loading-text {
+  margin-top: 1.5rem;
+  font-size: 1.2rem;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+}
+
+.error-text {
+  margin-top: 1rem;
+  padding: 1rem 2rem;
+  background: rgba(231, 76, 60, 0.9);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  max-width: 90%;
+  text-align: center;
+}
+
 /* LINEミニアプリ セーフエリア対応 */
 .app-layout {
   display: flex;

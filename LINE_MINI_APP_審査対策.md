@@ -61,8 +61,8 @@ VITE_MINI_APP_ID=2000207130-jq8XNWKo
 ##### LIFF設定画面:
 1. **LIFF ID**: `2000207130-jq8XNWKo`（審査用）
 2. **LIFF URL（エンドポイントURL）**:
-   - 正しいデプロイ先URLが設定されているか
-   - 例: `https://booking-system-firebase-764d2.web.app`
+   - 正しいVercelデプロイ先URLが設定されているか
+   - 例: `https://serverless-booking-system-seven.vercel.app`（実際のVercel URLに置き換え）
 3. **スコープ設定**:
    - `profile` (必須)
    - `openid` (推奨)
@@ -73,30 +73,41 @@ VITE_MINI_APP_ID=2000207130-jq8XNWKo
 1. **審査用URL**: 上記のLIFF URLと一致しているか
 2. **本番用URL**: 別のLIFF IDを使用
 
-#### 3. デプロイ確認
+#### 3. デプロイ確認（Vercel使用）
+
+**注意**: このプロジェクトはVercelでデプロイされています（Firebase Hostingではありません）
 
 **確認すべきこと**:
 ```bash
-# 本番環境がデプロイされているか確認
-firebase hosting:channel:list
+# Vercelのデプロイ状況を確認
+vercel ls
 
-# 特定のURLで動作確認
-curl -I https://booking-system-firebase-764d2.web.app
+# 特定のURLで動作確認（実際のVercel URLに置き換えてください）
+curl -I https://serverless-booking-system-seven.vercel.app
 ```
 
 **ビルド・デプロイ手順（審査用環境）**:
 ```bash
-cd client
+cd /home/s_monou/booking-app/serverless-booking-system
 
-# 審査用の環境変数を設定（.envファイルで）
+# 審査用の環境変数を設定（client/.envファイルで）
 # VITE_MINI_APP_ID=2000207130-jq8XNWKo に変更
 
-# ビルド
-npm run build
+# Vercelでデプロイ
+vercel --prod
 
-# デプロイ
-firebase deploy --only hosting
+# または、GitHubにプッシュして自動デプロイ
+git add .
+git commit -m "審査用: 事業者情報を追加"
+git push origin main
 ```
+
+**Vercel環境変数の設定**:
+Vercelダッシュボードで環境変数を設定している場合:
+1. Vercel ダッシュボード > プロジェクト > Settings > Environment Variables
+2. `VITE_MINI_APP_ID` を審査用 `2000207130-jq8XNWKo` に設定
+3. 本番環境（Production）に適用
+4. Redeploy
 
 #### 4. 初期化エラーのデバッグ
 
@@ -182,9 +193,11 @@ if (!miniAppId) {
 
 ---
 
-## デプロイ手順（審査環境）
+## デプロイ手順（審査環境 - Vercel）
 
 ### 1. 環境変数の設定
+
+**方法A: ローカルの.envファイル（Git管理外）**
 
 `client/.env` を審査用に設定:
 ```env
@@ -192,7 +205,14 @@ VITE_MINI_APP_ID=2000207130-jq8XNWKo
 # Firebase設定は本番環境のまま
 ```
 
-### 2. ビルド
+**方法B: Vercelダッシュボード（推奨）**
+
+1. Vercel ダッシュボード > プロジェクト > Settings > Environment Variables
+2. `VITE_MINI_APP_ID` の値を `2000207130-jq8XNWKo` に変更
+3. Environment: `Production` を選択
+4. Save
+
+### 2. ビルド（ローカルで確認する場合のみ）
 
 ```bash
 cd /home/s_monou/booking-app/serverless-booking-system/client
@@ -201,16 +221,28 @@ npm run build
 
 ### 3. デプロイ
 
+**方法A: Vercel CLIでデプロイ**
 ```bash
-firebase deploy --only hosting
+cd /home/s_monou/booking-app/serverless-booking-system
+vercel --prod
 ```
+
+**方法B: GitHubプッシュで自動デプロイ（推奨）**
+```bash
+git add .
+git commit -m "審査対応: 事業者情報追加とプライバシーポリシー更新"
+git push origin main
+```
+
+Vercelが自動的にビルド・デプロイを実行します。
 
 ### 4. 動作確認
 
 1. ブラウザで直接アクセス:
    ```
-   https://booking-system-firebase-764d2.web.app
+   https://your-project.vercel.app
    ```
+   （実際のVercel URLで確認）
 
 2. LINEアプリ内で開く:
    - LINEデベロッパーコンソール > LIFF > エンドポイントURL
@@ -245,14 +277,29 @@ firebase deploy --only hosting
 
 ### デプロイが反映されない場合
 
-1. キャッシュをクリア:
+1. Vercelのデプロイログを確認:
+   - Vercelダッシュボード > Deployments
+   - 最新のデプロイが成功しているか確認
+   - ビルドログでエラーがないか確認
+
+2. 環境変数の確認:
    ```bash
-   firebase hosting:channel:deploy preview-審査
+   # ブラウザのコンソールで実行
+   console.log(import.meta.env.VITE_MINI_APP_ID)
    ```
+   正しいLIFF IDが表示されるか確認
 
-2. ブラウザのキャッシュクリア（Ctrl + Shift + Delete）
+3. キャッシュをクリア:
+   - Vercel: Redeploy（Bypass Cache）
+   - ブラウザ: キャッシュクリア（Ctrl + Shift + Delete）
+   - LINE: アプリのキャッシュクリア（設定 > トーク > データの削除）
 
-3. LINEアプリのキャッシュクリア（設定 > トーク > データの削除）
+4. 別のブランチでテスト:
+   ```bash
+   git checkout -b test-review
+   git push origin test-review
+   ```
+   Vercelで preview デプロイを確認
 
 ---
 
