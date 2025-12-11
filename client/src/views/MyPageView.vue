@@ -90,10 +90,12 @@ const isSendingContact = ref(false)
 
 const fetchReservations = async (userId: string) => {
   loading.value = true
+  console.log('[MyPage] fetchReservations called with userId:', userId)
   try {
     // 本日00:00以降の予約のみ取得
     const today = new Date()
     today.setHours(0, 0, 0, 0)
+    console.log('[MyPage] Fetching reservations from:', today)
 
     const q = query(
       collection(db, 'reservations'),
@@ -101,9 +103,11 @@ const fetchReservations = async (userId: string) => {
       where('start_at', '>=', Timestamp.fromDate(today))
     )
     const querySnapshot = await getDocs(q)
+    console.log('[MyPage] Query result size:', querySnapshot.size)
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
     // JavaScript側でソート
     reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
+    console.log('[MyPage] Reservations loaded:', reservations.value.length)
 
     // プロフィール取得 (UID優先)
     const docRef = doc(db, 'customers', userId)
@@ -135,9 +139,11 @@ const fetchReservations = async (userId: string) => {
       }
     }
   } catch (error) {
-    console.error('Error fetching reservations:', error)
+    console.error('[MyPage] Error fetching reservations:', error)
+    dialog.alert('予約情報の取得に失敗しました。ページを更新してください。', 'エラー')
   } finally {
     loading.value = false
+    console.log('[MyPage] Loading complete')
   }
 }
 
@@ -414,8 +420,8 @@ const deleteAccount = async () => {
             <ul v-else class="reservation-list">
               <li v-for="reservation in reservations" :key="reservation.id" class="reservation-item"
                 :class="{ cancelled: reservation.status === 'cancelled' }">
-                <div class="reservation-header">
-                  <span class="reservation-date">
+                <div class="res-header">
+                  <span class="date">
                     {{ new Date(reservation.start_at.seconds * 1000).toLocaleString('ja-JP', {
                       year: 'numeric',
                       month: 'long',
@@ -435,7 +441,7 @@ const deleteAccount = async () => {
                   </li>
                 </ul>
                 <div class="reservation-actions">
-                  <button v-if="reservation.status === 'confirmed'" @click="cancelReservation(reservation.id)"
+                  <button v-if="reservation.status === 'confirmed' || reservation.status === 'pending'" @click="cancelReservation(reservation.id)"
                     class="cancel-btn" :disabled="isCancellingReservation">
                     {{ isCancellingReservation ? '処理中...' : 'キャンセル' }}
                   </button>
