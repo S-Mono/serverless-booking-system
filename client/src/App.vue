@@ -122,11 +122,8 @@ const isLineApp = typeof navigator !== 'undefined' && navigator.userAgent.includ
         Mode: {{ import.meta.env.MODE }}
       </p>
       <!-- スキップボタン（5秒後に表示） -->
-      <button 
-        @click="lineAuthStore.isInitializing = false" 
-        class="skip-btn"
-        style="margin-top: 20px; padding: 10px 20px; background: rgba(255,255,255,0.3); border: 1px solid white; color: white; border-radius: 4px; cursor: pointer;"
-      >
+      <button @click="lineAuthStore.isInitializing = false" class="skip-btn"
+        style="margin-top: 20px; padding: 10px 20px; background: rgba(255,255,255,0.3); border: 1px solid white; color: white; border-radius: 4px; cursor: pointer;">
         スキップして続行
       </button>
     </div>
