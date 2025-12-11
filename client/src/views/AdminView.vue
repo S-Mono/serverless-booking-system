@@ -21,7 +21,7 @@ interface Staff { id: string; name: string; color?: string }
 interface Reservation {
   id: string; start_at: Timestamp; end_at: Timestamp; staff_id: string
   customer_id?: string; // 👈 追加
-  customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number }[]; status: string; source?: 'web' | 'phone'; note?: string
+  customer_name?: string; customer_phone?: string; menu_items: { title: string; duration: number; price?: number }[]; status: string; source?: 'web' | 'phone'; note?: string; total_price?: number; total_duration_min?: number
 }
 interface Menu { id: string; title: string; duration_min: number; price: number }
 interface ShopConfig { holiday_weekdays: number[]; closed_dates: string[]; business_hours: { start: string; end: string }; tax_rate: number }
@@ -583,6 +583,25 @@ const deleteReservation = async (id: string) => {
 
 // 🟢 予約確定 (メッセージ作成機能付き)
 const approveReservation = async (res: Reservation) => {
+  // 🟢 予約内容の確認ダイアログ
+  const startDate = res.start_at.toDate()
+  const dateStr = startDate.toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    weekday: 'short'
+  })
+  const staffName = getStaffName(res.staff_id)
+  const menuList = res.menu_items.map(m => `  ${m.title} (${m.duration}分)${m.price ? ` - ¥${m.price.toLocaleString()}` : ''}`).join('\n')
+  const totalPrice = res.total_price ? `¥${res.total_price.toLocaleString()}` : '未設定'
+  const totalDuration = res.total_duration_min ? `${res.total_duration_min}分` : '未設定'
+  const confirmMessage = `この内容で予約を確定します。\nよろしいでしょうか？\n\n【予約内容】\n日時: ${dateStr}\nお客様: ${res.customer_name}\n担当: ${staffName}\nメニュー:\n${menuList}\n\n合計: ${totalPrice} (${totalDuration})`
+
+  const confirmed = await dialog.open(confirmMessage, { title: '予約確認', type: 'normal', cancelText: 'いいえ', confirmText: 'はい' })
+  if (!confirmed) return
+
   try {
     // 1. ステータス更新
     await updateDoc(doc(db, 'reservations', res.id), { status: 'confirmed' })
