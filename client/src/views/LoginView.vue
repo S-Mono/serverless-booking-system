@@ -108,8 +108,15 @@ onMounted(async () => {
     } else {
       console.warn('VITE_MINI_APP_ID is not defined')
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('LINE Mini App init failed', error)
+    // LIFF初期化失敗時もログイン画面を表示
+    isLineApp.value = false
+    // エラーメッセージを表示（デバッグ用）
+    if (error.code) {
+      console.error('LIFF Error Code:', error.code)
+      message.value = `LINE連携エラー: ${error.code}`
+    }
   } finally {
     miniAppLoading.value = false
   }
