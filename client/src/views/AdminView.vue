@@ -361,7 +361,8 @@ const requestNotificationPermission = async () => {
     console.log('requestNotificationPermission - Notification.permission:', permission)
     if (permission === 'granted') {
       console.log('Getting FCM token...')
-      const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+      // const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+      const token = null // 審査用に無効化
       console.log('FCM token obtained:', token ? token.substring(0, 20) + '...' : 'null')
       if (token) {
         // 既にDBに存在するかチェック（重複登録防止）
@@ -442,7 +443,8 @@ const requestNotificationPermission = async () => {
 // 🔔 4. 通知OFF処理 (新規)
 const turnOffNotification = async () => {
   try {
-    const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+    // const token = await getToken(messaging, { vapidKey: VAPID_KEY })
+    const token = null // 審査用に無効化
     if (token) {
       // DBから削除
       await deleteDoc(doc(db, 'admin_tokens', token))
