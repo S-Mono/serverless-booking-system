@@ -393,7 +393,7 @@ const requestNotificationPermission = async () => {
           // ユーザー操作の文脈なので WebAudio の resume とプリロード済みバッファの短再生を試みる
           ensureAudioContext()
           if (audioCtx) {
-            try { await audioCtx.resume() } catch (_) { /* ignore */ }
+            try { await audioCtx.resume() } catch (_) { } // ignore
             if (!chimeBuffer) await preloadChime()
             if (chimeBuffer) {
               try {
@@ -405,7 +405,7 @@ const requestNotificationPermission = async () => {
                 src.connect(g)
                 g.connect(audioCtx.destination)
                 src.start()
-                setTimeout(() => { try { src.stop() } catch (_) { } }, 120)
+                setTimeout(() => { try { src.stop() } catch (_) { } }, 120) // ignore errors
                 console.log('通知用サウンドをWebAudioでプリロード/プライムしました')
               } catch (e) {
                 console.warn('WebAudio test playback failed', e)
@@ -419,7 +419,7 @@ const requestNotificationPermission = async () => {
                 console.log('通知用サウンド（Audio element）でプリロードに成功')
               } catch (e) {
                 console.warn('通知サウンドのプリロードがブロックされました', e)
-                try { playFallbackBeep() } catch (_) { /* ignore */ }
+                try { playFallbackBeep() } catch (_) { } // ignore
               }
             }
           }
