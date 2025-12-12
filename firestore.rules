@@ -43,6 +43,8 @@ service cloud.firestore {
     match /customers/{userId} {
       allow read, write: if isAdmin();
       allow read, write: if isOwner(userId);
+      allow get, list: if true;  // 電話番号ログイン用の検索を許可
+      allow create: if isAuthenticated() && isOwner(userId);  // 新規ユーザー登録時の作成を許可
     }
 
     // 📋 マスタデータ
