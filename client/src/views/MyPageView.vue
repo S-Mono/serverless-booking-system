@@ -514,6 +514,7 @@ const deleteAccount = async () => {
                 <div class="reservation-actions">
                   <button v-if="reservation.status === 'confirmed' || reservation.status === 'pending'"
                     @click="cancelReservation(reservation.id)" class="cancel-btn" :disabled="isCancellingReservation">
+                    <span v-if="isCancellingReservation" class="spinner spinner-danger"></span>
                     {{ isCancellingReservation ? '処理中...' : 'キャンセル' }}
                   </button>
                 </div>
@@ -574,6 +575,7 @@ const deleteAccount = async () => {
                 <li><strong>この操作は取り消せません</strong></li>
               </ul>
               <button @click="deleteAccount" class="delete-account-btn" :disabled="isDeletingAccount">
+                <span v-if="isDeletingAccount" class="spinner"></span>
                 {{ isDeletingAccount ? '処理中...' : '退会する' }}
               </button>
             </div>
@@ -1069,6 +1071,30 @@ textarea:disabled {
 .cancel-btn:hover {
   background: #e74c3c;
   color: white;
+}
+
+/* スピナー */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.spinner-danger {
+  border: 2px solid rgba(231, 76, 60, 0.3);
+  border-top-color: #e74c3c;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 768px) {

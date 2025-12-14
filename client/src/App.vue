@@ -399,7 +399,7 @@ main {
     background: transparent;
     border: none;
     cursor: pointer;
-    z-index: 102;
+    z-index: 152;
   }
 
   .bar {
@@ -434,7 +434,7 @@ main {
     justify-content: flex-start;
     transform: translateX(100%);
     transition: transform 0.3s ease-in-out;
-    z-index: 101;
+    z-index: 151;
     box-shadow: -4px 0 10px rgba(0, 0, 0, 0.3);
   }
 
@@ -500,6 +500,6 @@ main {
   width: 100%;
   height: 100vh;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 100;
+  z-index: 150;
 }
 </style>
