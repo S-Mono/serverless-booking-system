@@ -758,7 +758,7 @@ const submitReservation = async () => {
   justify-content: center;
   gap: 3rem;
   align-items: center;
-  z-index: 100;
+  z-index: 90;
   box-sizing: border-box;
   flex-shrink: 0;
 }
