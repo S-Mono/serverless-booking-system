@@ -32,6 +32,11 @@ const staffs = ref<Staff[]>([])
 const listReservations = ref<Reservation[]>([])
 // reservations for the right-side timeline (only the selectedDate)
 const dayReservations = ref<Reservation[]>([])
+// 履歴用（確定・キャンセル済み予約）
+const historyReservations = ref<Reservation[]>([])
+const showHistory = ref(false)
+const historyDays = ref(30) // 履歴表示期間（日数）
+
 const menus = ref<Menu[]>([])
 const shopConfig = ref<ShopConfig>({ holiday_weekdays: [], closed_dates: [], business_hours: { start: '09:00', end: '19:00' }, tax_rate: 10 })
 const loading = ref(true)
@@ -45,6 +50,7 @@ const closeHour = ref(19)
 
 let unsubscribeList: Unsubscribe | null = null
 let unsubscribeDay: Unsubscribe | null = null
+let unsubscribeHistory: Unsubscribe | null = null
 
 const isDragging = ref(false)
 const dragStaffId = ref<string | null>(null)
@@ -227,7 +233,9 @@ const initData = async (fetchMaster = true) => {
     if (unsubscribeDay) unsubscribeDay()
     const qDay = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(endOfDay)), orderBy('start_at', 'asc'))
     unsubscribeDay = onSnapshot(qDay, (snapshot) => {
-      dayReservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+      // キャンセル済みを除外
+      const allDayReservations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+      dayReservations.value = allDayReservations.filter(res => res.status !== 'cancelled')
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const data = change.doc.data();
@@ -248,13 +256,13 @@ const initData = async (fetchMaster = true) => {
                 return
               }
 
-              // 🎵 音を鳴らす（可能なら WebAudio バッファを使用）
+              // 音を鳴らす（可能なら WebAudio バッファを使用）
               playChime().then(() => console.log('チャイム再生成功')).catch(e => {
                 console.warn('チャイム再生ブロック', e)
                 playFallbackBeep()
               })
 
-              // ✨ ダイアログ表示
+              // ダイアログ表示
               const timeStr = `${formatTime(data.start_at)} - ${formatTime(data.end_at)}`;
               const staffName = getStaffName(data.staff_id);
               const menuName = data.menu_items?.[0]?.title || 'メニュー不明';
@@ -278,11 +286,52 @@ const initData = async (fetchMaster = true) => {
     windowEnd.setDate(windowEnd.getDate() + listWindowDays.value)
     const qList = query(collection(db, 'reservations'), where('start_at', '>=', Timestamp.fromDate(startOfDay)), where('start_at', '<', Timestamp.fromDate(windowEnd)), orderBy('start_at', 'asc'))
     unsubscribeList = onSnapshot(qList, (snapshot) => {
-      listReservations.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+      // キャンセル済みを除外
+      const allListReservations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+      listReservations.value = allListReservations.filter(res => res.status !== 'cancelled')
     })
+
+    // 3) 履歴データの取得（確定・キャンセル済み）
+    fetchHistoryReservations()
 
     // Note: Foreground FCM handler is registered once in onMounted lifecycle
   } catch (e) { console.error(e); loading.value = false }
+}
+
+// 履歴（確定・キャンセル済み）を取得する関数
+const fetchHistoryReservations = () => {
+  if (unsubscribeHistory) unsubscribeHistory()
+
+  // 指定日数前から現在までの予約を取得
+  const endDate = new Date()
+  const startDate = new Date(endDate)
+  startDate.setDate(startDate.getDate() - historyDays.value)
+  startDate.setHours(0, 0, 0, 0)
+
+  // 過去N日間の予約を取得
+  const qHistory = query(
+    collection(db, 'reservations'),
+    where('start_at', '>=', Timestamp.fromDate(startDate)),
+    orderBy('start_at', 'desc')
+  )
+
+  unsubscribeHistory = onSnapshot(qHistory, (snapshot) => {
+    const allReservations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
+
+    // デバッグ：全予約のステータスを確認
+    console.log('[履歴デバッグ] 全予約:', allReservations.map(r => ({
+      id: r.id.slice(0, 8),
+      status: r.status,
+      date: r.start_at.toDate().toLocaleDateString(),
+      customer: r.customer_name
+    })))
+
+    // 確定またはキャンセル済みのみを表示
+    historyReservations.value = allReservations.filter(res =>
+      res.status === 'confirmed' || res.status === 'cancelled'
+    )
+    console.log('[履歴] 取得件数:', allReservations.length, 'フィルタ後:', historyReservations.value.length)
+  })
 }
 
 // 審査用：プッシュ通知機能を一時的に無効化
@@ -578,14 +627,17 @@ const submitReservation = async () => {
 }
 
 const deleteReservation = async (id: string) => {
-  const ok = await dialog.confirm('本当に削除しますか？\n（復元できません）', '削除確認', 'danger')
+  const ok = await dialog.confirm('この予約をキャンセルしますか？\n（履歴に残ります）', 'キャンセル確認', 'danger')
   if (!ok) return
 
   try {
-    // 1. 予約データの削除 (物理削除)
-    await deleteDoc(doc(db, 'reservations', id))
+    // 1. 予約データを論理削除（status='cancelled'に変更）
+    await updateDoc(doc(db, 'reservations', id), {
+      status: 'cancelled',
+      cancelled_at: Timestamp.now()
+    })
 
-    // 🟢 2. 関連するメッセージを「キャンセル扱い」に更新
+    // 2. 関連するメッセージを「キャンセル扱い」に更新
     const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
     const msgSnap = await getDocs(msgQ)
 
@@ -597,7 +649,7 @@ const deleteReservation = async (id: string) => {
     })
 
     showDetailModal.value = false
-    // 完了ダイアログは出さずにスッと閉じる（既存の挙動）
+    await dialog.alert('予約をキャンセルしました\n履歴からご確認いただけます')
 
   } catch (e) {
     console.error(e)
@@ -605,7 +657,58 @@ const deleteReservation = async (id: string) => {
   }
 }
 
-// 🟢 予約確定 (メッセージ作成機能付き)
+const restoreReservation = async (res: Reservation) => {
+  const ok = await dialog.confirm('この予約を復元しますか？\n（仮予約として復元されます）', '復元確認', 'warning')
+  if (!ok) return
+
+  try {
+    const startTime = res.start_at.toDate()
+    const endTime = res.end_at.toDate()
+
+    const conflictQuery = query(
+      collection(db, 'reservations'),
+      where('staff_id', '==', res.staff_id),
+      where('start_at', '>=', Timestamp.fromDate(new Date(startTime.getTime() - 24 * 60 * 60 * 1000))),
+      where('start_at', '<=', Timestamp.fromDate(new Date(endTime.getTime() + 24 * 60 * 60 * 1000)))
+    )
+
+    const conflictSnap = await getDocs(conflictQuery)
+    const conflicts = conflictSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Reservation))
+      .filter(r => {
+        if (r.id === res.id || r.status === 'cancelled') return false
+        const rStart = r.start_at.toDate().getTime()
+        const rEnd = r.end_at.toDate().getTime()
+        const targetStart = startTime.getTime()
+        const targetEnd = endTime.getTime()
+        return (rStart < targetEnd && rEnd > targetStart)
+      })
+
+    if (conflicts.length > 0) {
+      const conflict = conflicts[0]!
+      const conflictTime = formatTime(conflict.start_at)
+      await dialog.alert(
+        `指定の時間帯に既に予約が入っています\n\n予約時間: ${conflictTime}\n顧客: ${conflict.customer_name || '不明'}\n\n先に既存の予約を調整してから復元してください`,
+        '復元できません'
+      )
+      return
+    }
+
+    await updateDoc(doc(db, 'reservations', res.id), {
+      status: 'pending',
+      cancelled_at: null
+    })
+
+    showDetailModal.value = false
+    await dialog.alert('予約を復元しました\n仮予約として登録されました')
+
+  } catch (e) {
+    console.error(e)
+    dialog.alert('復元に失敗しました')
+  }
+}
+
+// �🟢 予約確定 (メッセージ作成機能付き)
 const approveReservation = async (res: Reservation) => {
   // 🟢 予約内容の確認ダイアログ
   const startDate = res.start_at.toDate()
@@ -652,7 +755,7 @@ const approveReservation = async (res: Reservation) => {
   }
 }
 
-// 🔍 予約詳細を開く（履歴取得も行う）
+// 予約詳細を開く（履歴取得も行う）
 const openReservationDetail = async (res: Reservation) => {
   selectedReservation.value = res
   showDetailModal.value = true
@@ -676,7 +779,7 @@ const openReservationDetail = async (res: Reservation) => {
 // 顧客詳細画面へ遷移
 const goToCustomerDetail = () => {
   if (selectedReservation.value?.customer_id) {
-    // 🟢 open_id パラメータを付与して遷移
+    // open_id パラメータを付与して遷移
     router.push(`/admin/customers?open_id=${selectedReservation.value.customer_id}`)
   } else {
     router.push('/admin/customers')
@@ -846,6 +949,12 @@ const loadMoreDays = (days = 30) => {
   initData(false)
 }
 
+// 履歴表示期間を延長
+const loadMoreHistoryDays = (days = 30) => {
+  historyDays.value += days
+  fetchHistoryReservations()
+}
+
 onMounted(async () => {
   initData()
   // try to preload the chime buffer for lower-latency playback
@@ -896,6 +1005,7 @@ onMounted(async () => {
 onUnmounted(() => {
   try { if (unsubscribeDay) unsubscribeDay() } catch (_) { }
   try { if (unsubscribeList) unsubscribeList() } catch (_) { }
+  try { if (unsubscribeHistory) unsubscribeHistory() } catch (_) { }
   // 審査用：プッシュ通知機能を一時的に無効化
   // try { if (unregisterFcmOnMessage) unregisterFcmOnMessage() } catch (_) { }
 })
@@ -1260,6 +1370,61 @@ const exportReservationsToExcel = async () => {
             </div>
           </div>
         </div>
+
+        <!-- 予約履歴セクション -->
+        <div class="history-section">
+          <div class="history-header">
+            <button @click="showHistory = !showHistory" class="history-toggle-btn">
+              <span class="toggle-icon">{{ showHistory ? '▼' : '▶' }}</span>
+              <h3 style="margin: 0;">📋 予約履歴（確定・キャンセル済み）</h3>
+              <span class="history-count">{{ historyReservations.length }}件</span>
+            </button>
+          </div>
+
+          <transition name="slide-down">
+            <div v-if="showHistory" class="history-content">
+              <div class="history-info">
+                <p>過去{{ historyDays }}日間の確定・キャンセル済み予約を表示しています</p>
+                <button class="load-more-btn" @click="loadMoreHistoryDays(30)">さらに30日を読み込む</button>
+              </div>
+
+              <div v-if="historyReservations.length === 0" class="no-data">
+                履歴はありません
+              </div>
+
+              <div v-else class="history-list">
+                <div v-for="res in historyReservations" :key="res.id" class="history-card"
+                  :class="{ 'cancelled': res.status === 'cancelled' }" @click="openReservationDetail(res)">
+                  <div class="history-card-header">
+                    <span class="history-date">{{ formatDateJP(res.start_at.toDate()) }}</span>
+                    <span class="history-time">{{ formatTime(res.start_at) }} - {{ formatTime(res.end_at) }}</span>
+                    <span class="history-status" :class="res.status">
+                      {{ res.status === 'confirmed' ? '✓ 確定' : '✕ キャンセル' }}
+                    </span>
+                  </div>
+                  <div class="history-card-body">
+                    <div class="history-info-row">
+                      <span class="label">担当:</span>
+                      <span class="value">{{ getStaffName(res.staff_id) }}</span>
+                    </div>
+                    <div class="history-info-row">
+                      <span class="label">顧客:</span>
+                      <span class="value">{{ res.customer_name || '不明' }}</span>
+                    </div>
+                    <div class="history-info-row">
+                      <span class="label">メニュー:</span>
+                      <span class="value">{{res.menu_items?.map(m => m.title).join(', ') || '-'}}</span>
+                    </div>
+                    <div v-if="res.total_price" class="history-info-row">
+                      <span class="label">金額:</span>
+                      <span class="value price">¥{{ res.total_price?.toLocaleString() }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </transition>
+        </div>
       </div>
     </div>
 
@@ -1355,7 +1520,10 @@ const exportReservationsToExcel = async () => {
         </div>
 
         <div class="modal-actions split">
-          <button class="delete-confirm-btn" @click="deleteReservation(selectedReservation.id)">🗑️ 削除</button>
+          <button v-if="selectedReservation.status === 'cancelled'" class="restore-btn"
+            @click="restoreReservation(selectedReservation)">🔄 復元</button>
+          <button v-else class="delete-confirm-btn" @click="deleteReservation(selectedReservation.id)">🗑️
+            キャンセル</button>
           <button class="edit-btn" @click="openEditModal(selectedReservation)">✏️ 編集</button>
         </div>
       </div>
@@ -2229,6 +2397,21 @@ textarea {
   background: #e67e22;
 }
 
+.restore-btn {
+  background: #27ae60;
+  color: white;
+  border: none;
+  padding: 0.5rem 1.2rem;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.restore-btn:hover {
+  background: #229954;
+}
+
 .tag-phone {
   color: #e67e22;
   font-weight: bold;
@@ -2268,10 +2451,186 @@ textarea {
   display: block;
 }
 
+/* 予約履歴セクション */
+.history-section {
+  margin-top: 2rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.history-header {
+  background: white;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.history-toggle-btn {
+  width: 100%;
+  padding: 1rem 1.5rem;
+  background: white;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.history-toggle-btn:hover {
+  background: #f8f9fa;
+}
+
+.toggle-icon {
+  font-size: 1rem;
+  color: #666;
+  transition: transform 0.3s;
+}
+
+.history-count {
+  margin-left: auto;
+  background: #3498db;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.history-content {
+  padding: 1.5rem;
+}
+
+.history-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 4px;
+}
+
+.history-info p {
+  margin: 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.history-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.history-card {
+  background: white;
+  border-radius: 6px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-left: 4px solid #27ae60;
+}
+
+.history-card.cancelled {
+  border-left-color: #e74c3c;
+  opacity: 0.8;
+}
+
+.history-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.history-card-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #eee;
+}
+
+.history-date {
+  font-weight: bold;
+  color: #333;
+}
+
+.history-time {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.history-status {
+  margin-left: auto;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.history-status.confirmed {
+  background: #d4edda;
+  color: #155724;
+}
+
+.history-status.cancelled {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.history-card-body {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.history-info-row {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.history-info-row .label {
+  color: #666;
+  min-width: 80px;
+}
+
+.history-info-row .value {
+  color: #333;
+  font-weight: 500;
+}
+
+.history-info-row .value.price {
+  color: #27ae60;
+  font-weight: bold;
+}
+
+/* スライドダウンアニメーション */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.3s ease;
+  max-height: 2000px;
+  overflow: hidden;
+}
+
+.slide-down-enter-from,
+.slide-down-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+
 @media (max-width: 768px) {
   .modal-body {
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .history-card-header {
+    flex-wrap: wrap;
+  }
+
+  .history-info {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
   }
 }
 </style>
