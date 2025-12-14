@@ -75,41 +75,31 @@ onMounted(async () => {
   try {
     const miniAppId = import.meta.env.VITE_MINI_APP_ID
     if (miniAppId) {
-      console.log('Initializing LINE Mini App:', miniAppId)
       await liff.init({ liffId: miniAppId })
-
-      console.log('LIFF initialized successfully')
-      console.log('liff.isInClient():', liff.isInClient())
-      console.log('liff.isLoggedIn():', liff.isLoggedIn())
 
       if (liff.isInClient()) {
         isLineApp.value = true
-        console.log('Running in LINE app')
 
         // ログアウト直後かチェック（5秒以内なら自動ログインをスキップ）
         const logoutFlag = localStorage.getItem('logout_flag')
         const now = Date.now()
         if (logoutFlag && now - parseInt(logoutFlag) < 5000) {
-          console.log('Recently logged out, skipping auto-login')
           localStorage.removeItem('logout_flag')
         } else {
           // ミニアプリは自動ログイン状態のため、すぐに認証処理
           if (liff.isLoggedIn()) {
-            console.log('Already logged in, attempting auto-login...')
             // 自動ログイン処理を実行
             await autoLoginWithLine()
-          } else {
-            console.warn('Not logged in in LINE app - this should not happen in Mini App')
           }
         }
-      } else {
-        console.log('Not running in LINE app (browser or other)')
       }
-    } else {
-      console.warn('VITE_MINI_APP_ID is not defined')
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('LINE Mini App init failed', error)
+    isLineApp.value = false
+    if (error.code) {
+      message.value = `LINE連携エラー: ${error.code}`
+    }
   } finally {
     miniAppLoading.value = false
   }
@@ -252,7 +242,7 @@ const handleAuth = async () => {
   <div class="auth-container">
     <h2>{{ isLoginMode ? 'ログイン' : '新規会員登録' }}</h2>
 
-    <div v-if="miniAppLoading" class="loading-text">LINE連携を確認中...</div>
+    <!-- LINE連携確認中の表示を廃止 -->
 
     <div class="social-login">
       <button v-if="isLineApp" class="line-login-btn" @click="loginWithLine" :disabled="loading">

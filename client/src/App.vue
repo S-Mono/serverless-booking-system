@@ -110,12 +110,6 @@ const goToMessages = () => {
   closeMenu()
   router.push('/messages')
 }
-
-// デバッグ用の環境変数
-const liffId = import.meta.env.VITE_MINI_APP_ID || '未設定'
-const envMode = import.meta.env.MODE || 'unknown'
-const currentUrl = typeof window !== 'undefined' ? window.location.href : ''
-const isLineApp = typeof navigator !== 'undefined' && navigator.userAgent.includes('Line')
 </script>
 
 <template>
@@ -126,20 +120,6 @@ const isLineApp = typeof navigator !== 'undefined' && navigator.userAgent.includ
     <p v-if="lineAuthStore.error" class="error-text">
       {{ lineAuthStore.error }}
     </p>
-    <!-- デバッグ情報 -->
-    <div class="debug-info">
-      <p style="font-size: 12px; color: #fff; margin-top: 20px; text-align: center; line-height: 1.6;">
-        URL: {{ currentUrl }}<br>
-        LIFF ID: {{ liffId }}<br>
-        UserAgent: {{ isLineApp ? 'LINE' : 'ブラウザ' }}<br>
-        Mode: {{ envMode }}
-      </p>
-      <!-- スキップボタン（5秒後に表示） -->
-      <button @click="lineAuthStore.isInitializing = false" class="skip-btn"
-        style="margin-top: 20px; padding: 10px 20px; background: rgba(255,255,255,0.3); border: 1px solid white; color: white; border-radius: 4px; cursor: pointer;">
-        スキップして続行
-      </button>
-    </div>
   </div>
 
   <!-- メインコンテンツ -->
