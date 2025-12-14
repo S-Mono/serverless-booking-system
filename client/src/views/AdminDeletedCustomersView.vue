@@ -64,7 +64,7 @@ onMounted(() => { fetchDeletedCustomers() })
     <div class="admin-container">
         <header class="admin-header trash-header">
             <button @click="goBack" class="back-btn">◀ 顧客一覧に戻る</button>
-            <h2>🗑️ 顧客ゴミ箱</h2>
+            <h2>� 削除済み顧客</h2>
         </header>
 
         <main class="admin-body">
@@ -92,7 +92,7 @@ onMounted(() => { fetchDeletedCustomers() })
                                 </td>
                             </tr>
                             <tr v-if="deletedCustomers.length === 0">
-                                <td colspan="4" class="no-data">ゴミ箱は空です</td>
+                                <td colspan="4" class="no-data">削除済みの顧客はありません</td>
                             </tr>
                         </tbody>
                     </table>
