@@ -52,30 +52,43 @@ const createCustomerData = async (user: User, provider: 'google' | 'line' | 'pho
 }
 
 onMounted(async () => {
+  console.log('=== LoginView.vue mounted ===')
+  console.log('User agent:', navigator.userAgent)
+  console.log('Mini app ID:', import.meta.env.VITE_MINI_APP_ID)
+  
   // 1. LINEアプリ判定
   if (/Line/i.test(navigator.userAgent)) {
     isLineApp.value = true
+    console.log('LINE app detected')
   }
 
   // 2. Googleリダイレクト復帰チェック
+  console.log('Checking Google redirect result...')
   try {
     const result = await getRedirectResult(auth)
     if (result) {
+      console.log('Google redirect result found:', result.user.uid)
       await createCustomerData(result.user, 'google')
       router.push('/')
       return
     }
+    console.log('No Google redirect result')
   } catch (error: any) {
     if (error.code !== 'auth/popup-closed-by-user') {
-      console.error(error)
+      console.error('Google redirect error:', error)
     }
   }
 
   // 3. LINEミニアプリ初期化
+  console.log('Initializing LINE mini app...')
   try {
     const miniAppId = import.meta.env.VITE_MINI_APP_ID
     if (miniAppId) {
+      console.log('LIFF ID found, initializing...')
       await liff.init({ liffId: miniAppId })
+      console.log('LIFF initialized successfully')
+      console.log('isInClient:', liff.isInClient())
+      console.log('isLoggedIn:', liff.isLoggedIn())
 
       if (liff.isInClient()) {
         isLineApp.value = true
@@ -84,21 +97,39 @@ onMounted(async () => {
         const logoutFlag = localStorage.getItem('logout_flag')
         const now = Date.now()
         if (logoutFlag && now - parseInt(logoutFlag) < 5000) {
+          console.log('Logout flag detected, skipping auto login')
           localStorage.removeItem('logout_flag')
         } else {
           // ミニアプリは自動ログイン状態のため、すぐに認証処理
           if (liff.isLoggedIn()) {
+            console.log('LIFF logged in, starting auto login...')
             // 自動ログイン処理を実行
             await autoLoginWithLine()
+          } else {
+            console.log('LIFF not logged in')
           }
         }
+      } else {
+        console.log('Not in LIFF client')
       }
+    } else {
+      console.log('No LIFF ID configured')
     }
   } catch (error: any) {
-    console.error('LINE Mini App init failed', error)
+    console.error('=== LIFF初期化エラー ===', error)
+    console.error('エラー詳細:', {
+      code: error.code,
+      message: error.message,
+      stack: error.stack
+    })
     isLineApp.value = false
+    miniAppLoading.value = false
+    
+    // エラーメッセージを必ず表示
     if (error.code) {
-      message.value = `LINE連携エラー: ${error.code}`
+      message.value = `LINE連携エラー [${error.code}]: ${error.message || '不明なエラー'}`
+    } else {
+      message.value = `LINE初期化失敗: ${error.message || JSON.stringify(error)}`
     }
   } finally {
     miniAppLoading.value = false
@@ -147,15 +178,22 @@ const autoLoginWithLine = async () => {
 
     console.log('Creating customer data...')
     await createCustomerData(user, 'line', lineName, lineName)
+    console.log('Customer data created successfully')
 
     // 成功時はオーバーレイをクリアしてから遷移
     console.log('Login successful, redirecting to /')
     socialAuth.value = null
     router.push('/')
   } catch (error: any) {
-    console.error('Auto login failed:', error)
-    message.value = `LINE自動ログイン失敗: ${error.message}`
+    console.error('=== Auto login failed ===', error)
+    console.error('Error details:', {
+      code: error.code,
+      message: error.message,
+      stack: error.stack
+    })
+    message.value = `LINE自動ログイン失敗 [${error.code || 'UNKNOWN'}]: ${error.message || 'エラーの詳細が不明です'}`
     socialAuth.value = null
+    miniAppLoading.value = false
   }
 }
 

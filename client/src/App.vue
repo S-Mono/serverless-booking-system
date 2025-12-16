@@ -67,13 +67,25 @@ let unsubscribeAuth: Unsubscribe | null = null
 let unsubscribeMessages: (() => void) | null = null
 
 onMounted(async () => {
-  await lineAuthStore.init()
+  console.log('=== App.vue mounted ===')
+  console.log('Line auth initializing...')
+  try {
+    await lineAuthStore.init()
+    console.log('Line auth initialized:', {
+      isLineApp: lineAuthStore.isLineApp,
+      user: lineAuthStore.user?.displayName
+    })
+  } catch (error) {
+    console.error('=== Line auth init error ===', error)
+  }
 
   unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    console.log('=== Auth state changed ===', user ? `User: ${user.uid}` : 'No user')
     if (user) {
       userStore.setUser(user)
       await fetchCustomerName(user)
       unsubscribeMessages = subscribeUnread(user.uid) // 監視開始
+      console.log('User setup complete:', userStore.customerName)
     } else {
       userStore.setUser(null)
       userStore.setCustomerName('')
