@@ -55,7 +55,7 @@ onMounted(async () => {
   console.log('=== LoginView.vue mounted ===')
   console.log('User agent:', navigator.userAgent)
   console.log('Mini app ID:', import.meta.env.VITE_MINI_APP_ID)
-  
+
   // 1. LINEアプリ判定
   if (/Line/i.test(navigator.userAgent)) {
     isLineApp.value = true
@@ -124,7 +124,7 @@ onMounted(async () => {
     })
     isLineApp.value = false
     miniAppLoading.value = false
-    
+
     // エラーメッセージを必ず表示
     if (error.code) {
       message.value = `LINE連携エラー [${error.code}]: ${error.message || '不明なエラー'}`
