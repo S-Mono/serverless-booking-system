@@ -73,7 +73,7 @@ onMounted(async () => {
     await lineAuthStore.init()
     console.log('Line auth initialized:', {
       isLineApp: lineAuthStore.isLineApp,
-      user: lineAuthStore.user?.displayName
+      profile: lineAuthStore.profile?.displayName
     })
   } catch (error) {
     console.error('=== Line auth init error ===', error)
