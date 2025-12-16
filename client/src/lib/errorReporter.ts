@@ -1,5 +1,6 @@
 import { collection, addDoc, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
+import liff from '@line/liff'
 
 /**
  * エラーをFirestoreに記録する
