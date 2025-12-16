@@ -191,6 +191,11 @@ const autoLoginWithLine = async () => {
       message: error.message,
       stack: error.stack
     })
+    
+    // エラーレポート送信
+    const { reportLiffError } = await import('../lib/errorReporter')
+    reportLiffError(error, 'login')
+    
     message.value = `LINE自動ログイン失敗 [${error.code || 'UNKNOWN'}]: ${error.message || 'エラーの詳細が不明です'}`
     socialAuth.value = null
     miniAppLoading.value = false

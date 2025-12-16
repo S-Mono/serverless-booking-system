@@ -77,6 +77,9 @@ onMounted(async () => {
     })
   } catch (error) {
     console.error('=== Line auth init error ===', error)
+    // エラーレポート送信
+    const { reportError } = await import('./lib/errorReporter')
+    reportError(error, 'APP_LINE_AUTH_INIT')
   }
 
   unsubscribeAuth = onAuthStateChanged(auth, async (user) => {

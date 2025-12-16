@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
+import { reportError } from './lib/errorReporter'
 
 // グローバルAbortErrorハンドラー（vConsoleより先に設定）
 window.addEventListener('unhandledrejection', (event) => {
@@ -24,11 +25,14 @@ window.addEventListener('unhandledrejection', (event) => {
     return false
   }
   
-  // それ以外のエラーは詳細にログ出力
+  // それ以外のエラーは詳細にログ出力してFirestoreに記録
   console.error('=== Unhandled Promise Rejection ===')
   console.error('Reason:', reason)
   console.error('Type:', typeof reason)
   console.error('Stack:', reason?.stack)
+  
+  // Firestoreにエラーレポート送信
+  reportError(reason, 'UNHANDLED_REJECTION')
 }, true) // キャプチャフェーズで先に処理
 
 // グローバルエラーハンドラー
@@ -38,6 +42,13 @@ window.addEventListener('error', (event) => {
   console.error('Filename:', event.filename)
   console.error('Line:', event.lineno, 'Column:', event.colno)
   console.error('Error:', event.error)
+  
+  // Firestoreにエラーレポート送信
+  reportError(event.error || new Error(event.message), 'GLOBAL_ERROR', {
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno
+  })
 })
 
 const app = createApp(App)

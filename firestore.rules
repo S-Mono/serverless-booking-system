@@ -65,5 +65,11 @@ service cloud.firestore {
     match /admin_tokens/{tokenId} {
       allow read, write: if isAdmin();
     }
+
+    // 🐛 エラーログ (error_logs) - 審査時のエラー収集用
+    match /error_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if true;  // 誰でも書き込み可能（エラー発生時に記録するため）
+    }
   }
 }
