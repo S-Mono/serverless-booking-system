@@ -80,7 +80,7 @@ onMounted(async () => {
   console.log('Checking LINE auth state from store...')
   console.log('LINE auth initialized:', lineAuthStore.isInitialized)
   console.log('Is LINE app:', lineAuthStore.isLineApp)
-  
+
   if (lineAuthStore.isInitialized && lineAuthStore.isLineApp) {
     // Storeで既にLIFFが初期化されている
     console.log('LIFF already initialized by store')
