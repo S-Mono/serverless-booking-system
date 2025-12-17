@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { auth, db } from '../lib/firebase'
 import {
@@ -15,8 +15,10 @@ import {
 } from 'firebase/auth'
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore'
 import liff from '@line/liff'
+import { useLineAuthStore } from '../stores/lineAuth'
 
 const router = useRouter()
+const lineAuthStore = useLineAuthStore()
 
 const isLoginMode = ref(true)
 const phoneNumber = ref('')
@@ -26,7 +28,8 @@ const message = ref('')
 // social 認証専用の状態 (google | line) を保持します。
 const socialAuth = ref<string | null>(null)
 const miniAppLoading = ref(true)
-const isLineApp = ref(false)
+// isLineAppはStoreから取得（2重管理を避ける）
+const isLineApp = computed(() => lineAuthStore.isLineApp)
 
 const PSEUDO_DOMAIN = '@local.booking-system'
 const LINE_DOMAIN = '@line.booking-system'
@@ -56,13 +59,7 @@ onMounted(async () => {
   console.log('User agent:', navigator.userAgent)
   console.log('Mini app ID:', import.meta.env.VITE_MINI_APP_ID)
 
-  // 1. LINEアプリ判定
-  if (/Line/i.test(navigator.userAgent)) {
-    isLineApp.value = true
-    console.log('LINE app detected')
-  }
-
-  // 2. Googleリダイレクト復帰チェック
+  // 1. Googleリダイレクト復帰チェック
   console.log('Checking Google redirect result...')
   try {
     const result = await getRedirectResult(auth)
@@ -79,59 +76,43 @@ onMounted(async () => {
     }
   }
 
-  // 3. LINEミニアプリ初期化
-  console.log('Initializing LINE mini app...')
-  try {
-    const miniAppId = import.meta.env.VITE_MINI_APP_ID
-    if (miniAppId) {
-      console.log('LIFF ID found, initializing...')
-      await liff.init({ liffId: miniAppId })
-      console.log('LIFF initialized successfully')
-      console.log('isInClient:', liff.isInClient())
-      console.log('isLoggedIn:', liff.isLoggedIn())
+  // 2. LINEミニアプリ自動ログイン（Storeで既に初期化済み）
+  console.log('Checking LINE auth state from store...')
+  console.log('LINE auth initialized:', lineAuthStore.isInitialized)
+  console.log('Is LINE app:', lineAuthStore.isLineApp)
+  
+  if (lineAuthStore.isInitialized && lineAuthStore.isLineApp) {
+    // Storeで既にLIFFが初期化されている
+    console.log('LIFF already initialized by store')
+    console.log('isInClient:', liff.isInClient())
+    console.log('isLoggedIn:', liff.isLoggedIn())
 
-      if (liff.isInClient()) {
-        isLineApp.value = true
-
-        // ログアウト直後かチェック（5秒以内なら自動ログインをスキップ）
-        const logoutFlag = localStorage.getItem('logout_flag')
-        const now = Date.now()
-        if (logoutFlag && now - parseInt(logoutFlag) < 5000) {
-          console.log('Logout flag detected, skipping auto login')
-          localStorage.removeItem('logout_flag')
-        } else {
-          // ミニアプリは自動ログイン状態のため、すぐに認証処理
-          if (liff.isLoggedIn()) {
-            console.log('LIFF logged in, starting auto login...')
-            // 自動ログイン処理を実行
-            await autoLoginWithLine()
-          } else {
-            console.log('LIFF not logged in')
-          }
+    // ログアウト直後かチェック（5秒以内なら自動ログインをスキップ）
+    const logoutFlag = localStorage.getItem('logout_flag')
+    const now = Date.now()
+    if (logoutFlag && now - parseInt(logoutFlag) < 5000) {
+      console.log('Logout flag detected, skipping auto login')
+      localStorage.removeItem('logout_flag')
+      miniAppLoading.value = false
+    } else {
+      // ミニアプリは自動ログイン状態のため、すぐに認証処理
+      if (liff.isLoggedIn()) {
+        console.log('LIFF logged in, starting auto login...')
+        try {
+          await autoLoginWithLine()
+        } catch (error: any) {
+          console.error('Auto login failed:', error)
+          message.value = `LINE自動ログイン失敗: ${error.message || 'エラーが発生しました'}`
+          miniAppLoading.value = false
         }
       } else {
-        console.log('Not in LIFF client')
+        console.log('LIFF not logged in')
+        miniAppLoading.value = false
       }
-    } else {
-      console.log('No LIFF ID configured')
     }
-  } catch (error: any) {
-    console.error('=== LIFF初期化エラー ===', error)
-    console.error('エラー詳細:', {
-      code: error.code,
-      message: error.message,
-      stack: error.stack
-    })
-    isLineApp.value = false
-    miniAppLoading.value = false
-
-    // エラーメッセージを必ず表示
-    if (error.code) {
-      message.value = `LINE連携エラー [${error.code}]: ${error.message || '不明なエラー'}`
-    } else {
-      message.value = `LINE初期化失敗: ${error.message || JSON.stringify(error)}`
-    }
-  } finally {
+  } else {
+    // LINEアプリではない、または初期化失敗
+    console.log('Not in LINE app or LIFF init failed')
     miniAppLoading.value = false
   }
 })
