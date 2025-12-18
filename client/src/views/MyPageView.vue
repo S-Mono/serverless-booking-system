@@ -252,6 +252,7 @@ const cancelReservation = async (id: string) => {
 
       if (msgSnap.size > 0) {
         console.log('[MyPage] メッセージが見つかりました:', msgSnap.size, '件')
+        console.log('[MyPage] 現在のユーザーUID:', currentUser.value?.uid)
 
         // 関連するメッセージがあれば全て更新
         for (const d of msgSnap.docs) {
@@ -262,6 +263,12 @@ const cancelReservation = async (id: string) => {
             customer_id: msgData.customer_id,
             reservation_id: msgData.reservation_id,
             is_cancelled: msgData.is_cancelled
+          })
+
+          console.log('[MyPage] 権限チェック:', {
+            メッセージのcustomer_id: msgData.customer_id,
+            現在のユーザーUID: currentUser.value?.uid,
+            一致: msgData.customer_id === currentUser.value?.uid
           })
 
           const currentTitle = msgData.title
@@ -276,6 +283,7 @@ const cancelReservation = async (id: string) => {
           })
 
           try {
+            console.log('[MyPage] updateDoc実行中... ドキュメントID:', d.id)
             await updateDoc(d.ref, {
               is_cancelled: true,
               title: newTitle
