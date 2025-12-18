@@ -8,6 +8,7 @@ import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
 import { useRouter } from 'vue-router'
 import liff from '@line/liff'
+import VConsole from 'vconsole'
 
 const dialog = useDialogStore()
 const userStore = useUserStore()
@@ -422,8 +423,19 @@ const sendContactForm = async () => {
 
 // 🟢 Authリスナーのクリーンアップ用
 let unsubscribeAuth: Unsubscribe | null = null
+let vConsoleInstance: VConsole | null = null
 
 onMounted(() => {
+  // vConsoleを初期化（開発時のデバッグ用）
+  vConsoleInstance = new VConsole({
+    theme: 'dark',
+    maxLogNumber: 1000,
+    onReady: () => {
+      console.log('[vConsole] Ready')
+    }
+  })
+  console.log('[MyPage] vConsole initialized')
+
   unsubscribeAuth = onAuthStateChanged(auth, (user) => {
     currentUser.value = user
     if (user) fetchReservations(user.uid)
@@ -432,6 +444,13 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  // vConsoleをクリーンアップ
+  if (vConsoleInstance) {
+    vConsoleInstance.destroy()
+    vConsoleInstance = null
+    console.log('[MyPage] vConsole destroyed')
+  }
+
   // リスナーを解除してメモリリークとAbortErrorを防ぐ
   if (unsubscribeAuth) {
     unsubscribeAuth()
