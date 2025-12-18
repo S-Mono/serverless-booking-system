@@ -390,18 +390,27 @@ const deleteAccount = async () => {
   try {
     // LINEアクセストークンを取得（LINEミニアプリの場合）
     let lineAccessToken: string | null | undefined
+    console.log('=== Withdraw Process Started ===')
+    console.log('liff.isInClient():', liff.isInClient())
+    console.log('liff.isLoggedIn():', liff.isLoggedIn())
+
     if (liff.isInClient() && liff.isLoggedIn()) {
       try {
         lineAccessToken = liff.getAccessToken()
-        console.log('LINE access token obtained for deauthorization')
+        console.log('LINE access token obtained:', lineAccessToken ? `${lineAccessToken.substring(0, 20)}...` : 'null')
+        console.log('Token length:', lineAccessToken?.length)
       } catch (error) {
         console.error('Failed to get LINE access token:', error)
       }
+    } else {
+      console.log('Not in LINE client or not logged in, skipping LINE deauthorization')
     }
 
     // Cloud Functionを呼び出し
+    console.log('Calling deleteUserAccount function...')
     const deleteUserAccount = httpsCallable(functions, 'deleteUserAccount')
     await deleteUserAccount({ lineAccessToken })
+    console.log('deleteUserAccount completed successfully')
 
     await dialog.alert('退会処理が完了しました。\nご利用ありがとうございました。', '退会完了')
 

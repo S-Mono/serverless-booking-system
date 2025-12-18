@@ -310,6 +310,12 @@ export const deleteUserAccount = onCall(
         // クライアント側から送信されたユーザーアクセストークン
         const userAccessToken = request.data?.lineAccessToken;
 
+        logger.info("LINE deauthorization attempt", {
+          userId,
+          hasToken: !!userAccessToken,
+          tokenLength: userAccessToken?.length || 0,
+        });
+
         if (userAccessToken) {
           const channelId = process.env.LINE_CHANNEL_ID;
           const channelSecret = process.env.LINE_CHANNEL_SECRET;
@@ -317,6 +323,8 @@ export const deleteUserAccount = onCall(
           if (!channelId || !channelSecret) {
             logger.warn("LINE credentials not configured");
           } else {
+            logger.info("Obtaining channel access token...");
+
             // チャネルアクセストークン取得
             const tokenResponse = await axios.post(
               "https://api.line.me/oauth2/v2.1/token",
@@ -331,13 +339,14 @@ export const deleteUserAccount = onCall(
             );
 
             const channelAccessToken = tokenResponse.data.access_token;
+            logger.info("Channel access token obtained");
 
             // ユーザーが認可した権限を取り消す（正しいエンドポイント）
-            await axios.post(
+            const deauthorizeResponse = await axios.post(
               "https://api.line.me/user/v1/deauthorize",
-              JSON.stringify({
+              {
                 userAccessToken: userAccessToken,
-              }),
+              },
               {
                 headers: {
                   "Content-Type": "application/json",
@@ -346,14 +355,25 @@ export const deleteUserAccount = onCall(
               }
             );
 
-            logger.info("LINE authorization revoked successfully", {userId});
+            logger.info("LINE authorization revoked successfully", {
+              userId,
+              status: deauthorizeResponse.status,
+              statusText: deauthorizeResponse.statusText,
+            });
           }
+        } else {
+          logger.warn("No LINE access token provided, skipping deauthorization");
         }
       } catch (lineError: unknown) {
-        const errorObj = lineError as {message?: string};
+        const errorObj = lineError as {
+          message?: string;
+          response?: {status?: number; data?: unknown};
+        };
         logger.error("Failed to revoke LINE authorization", {
           userId,
           error: errorObj.message,
+          status: errorObj.response?.status,
+          data: errorObj.response?.data,
         });
         // LINE連携解除に失敗してもアカウント削除は続行
       }
