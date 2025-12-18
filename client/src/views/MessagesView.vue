@@ -269,6 +269,7 @@ onUnmounted(() => {
                     <span class="msg-date">{{ formatDate(msg.created_at) }}</span>
                     <span class="msg-title">
                         <span v-if="msg.deleted_at" class="archived-badge">履歴</span>
+                        <span v-else-if="msg.is_cancelled" class="cancel-badge">キャンセル</span>
                         <span v-else-if="msg.is_read === false" class="new-badge">NEW</span>
                         {{ msg.title }}
                     </span>
@@ -542,26 +543,22 @@ onUnmounted(() => {
 
 /* キャンセルされたメッセージのスタイル */
 .message-card.cancelled {
-    background-color: #f3f3f3;
-    /* 背景をグレーに */
-    border-left: 5px solid #bdc3c7;
+    background-color: #f8f9fa;
+    /* 背景を薄いグレーに */
+    border-left: 5px solid #95a5a6;
     /* 左線をグレーに */
-    opacity: 0.7;
-    /* 全体を薄くする */
+    opacity: 0.85;
+    /* 全体を少し薄くする */
 }
 
-.message-card.cancelled .msg-title,
+.message-card.cancelled .msg-title {
+    color: #6c757d;
+    /* タイトルは薄い色に（取り消し線なし） */
+}
+
 .message-card.cancelled .msg-body {
     color: #95a5a6;
-    /* 文字色も薄く */
-    text-decoration: line-through;
-    /* 取り消し線（お好みで） */
-}
-
-/* 打ち消し線を入れるなら body の white-space と競合しないよう注意 */
-.message-card.cancelled .msg-body {
-    text-decoration: none;
-    /* 本文は読みづらくなるので線なしが良いかも */
+    /* 本文も薄い色に */
 }
 
 .cancel-badge {

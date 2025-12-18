@@ -19,6 +19,8 @@ interface Reservation {
   start_at: Timestamp
   menu_items: { title: string; price: number }[]
   status: string
+  is_cancelled?: boolean
+  cancelled_at?: Date
 }
 
 const reservations = ref<Reservation[]>([])
@@ -106,8 +108,10 @@ const fetchReservations = async (userId: string) => {
     const querySnapshot = await getDocs(q)
     console.log('[MyPage] Query result size:', querySnapshot.size)
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
-    // JavaScript側でソート
-    reservations.value = results.sort((a, b) => a.start_at.seconds - b.start_at.seconds)
+    // JavaScript側でソート & キャンセル済みを除外
+    reservations.value = results
+      .filter(res => !res.is_cancelled) // キャンセル済みは除外
+      .sort((a, b) => a.start_at.seconds - b.start_at.seconds)
     console.log('[MyPage] Reservations loaded:', reservations.value.length)
 
     // プロフィール取得 (UID優先)
@@ -227,9 +231,12 @@ const cancelReservation = async (id: string) => {
     console.log('[MyPage] Reservation data:', resData)
     console.log('[MyPage] Reservation customer_id:', resData.customer_id)
 
-    // 1. 予約自体の削除 (既存処理)
-    await deleteDoc(doc(db, 'reservations', id))
-    console.log('[MyPage] Reservation deleted successfully')
+    // 1. 予約を論理削除（is_cancelledフラグを追加）
+    await updateDoc(doc(db, 'reservations', id), {
+      is_cancelled: true,
+      cancelled_at: new Date()
+    })
+    console.log('[MyPage] Reservation marked as cancelled')
 
     // 🟢 2. 【追加】関連するメッセージを「キャンセル扱い」に更新
     // エラーが発生しても予約キャンセル自体は成功とする（非クリティカル処理）
