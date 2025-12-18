@@ -242,10 +242,15 @@ const cancelReservation = async (id: string) => {
     // エラーが発生しても予約キャンセル自体は成功とする（非クリティカル処理）
     console.log('[MyPage] === メッセージ更新処理開始 ===')
     console.log('[MyPage] 検索する reservation_id:', id)
+    console.log('[MyPage] 検索する customer_id:', currentUser.value?.uid)
 
     try {
       console.log('[MyPage] クエリ作成中...')
-      const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
+      const msgQ = query(
+        collection(db, 'messages'),
+        where('customer_id', '==', currentUser.value?.uid),  // 権限チェックのため必須
+        where('reservation_id', '==', id)
+      )
       console.log('[MyPage] クエリ作成完了')
 
       console.log('[MyPage] getDocs実行中...')
