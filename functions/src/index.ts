@@ -5,7 +5,7 @@ import * as logger from "firebase-functions/logger";
 import * as nodemailer from "nodemailer";
 import axios from "axios";
 import * as jwt from "jsonwebtoken";
-import jwkToPem = require("jwk-to-pem");
+import jwkToPem from "jwk-to-pem";
 
 admin.initializeApp();
 
