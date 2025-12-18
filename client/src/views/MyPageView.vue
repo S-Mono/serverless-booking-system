@@ -247,29 +247,29 @@ const cancelReservation = async (id: string) => {
 
       if (msgSnap.size > 0) {
         // 関連するメッセージがあれば全て更新
-        const updatePromises = msgSnap.docs.map(d => {
-          console.log('[MyPage] Updating message:', d.id, 'Title:', d.data().title)
+        for (const d of msgSnap.docs) {
+          console.log('[MyPage] Updating message:', d.id, 'Current title:', d.data().title)
           const currentTitle = d.data().title
-          return updateDoc(d.ref, {
-            is_cancelled: true, // キャンセル済みフラグ
-            title: currentTitle.startsWith('【キャンセル済】') 
-              ? currentTitle 
-              : '【キャンセル済】' + currentTitle // タイトルもわかりやすく変更
-          }).catch((err: any) => {
-            // 個別の更新エラーを静かに処理（permission-deniedなど）
-            console.warn('[MyPage] Single message update failed:', d.id, err.code || err.message)
-          })
-        })
-        await Promise.all(updatePromises)
-        console.log('[MyPage] Messages updated successfully')
+          const newTitle = currentTitle.startsWith('【キャンセル済】') 
+            ? currentTitle 
+            : '【キャンセル済】' + currentTitle
+          
+          try {
+            await updateDoc(d.ref, {
+              is_cancelled: true,
+              title: newTitle
+            })
+            console.log('[MyPage] ✅ Message updated successfully:', d.id)
+          } catch (err: any) {
+            console.error('[MyPage] ❌ Message update failed:', d.id, 'Error:', err.code || err.message, err)
+          }
+        }
+        console.log('[MyPage] All messages processed')
       } else {
         console.log('[MyPage] No messages found for reservation:', id)
       }
     } catch (msgError: any) {
-      // クエリ自体のエラーも静かに処理（AbortErrorなど）
-      if (msgError.name !== 'AbortError') {
-        console.warn('[MyPage] Message update failed (non-critical):', msgError.code || msgError.message)
-      }
+      console.error('[MyPage] ❌ Message query failed:', msgError.code || msgError.message, msgError)
     }
 
     dialog.alert('予約をキャンセルしました')
