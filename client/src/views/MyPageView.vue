@@ -232,10 +232,10 @@ const cancelReservation = async (id: string) => {
     console.log('[MyPage] Reservation customer_id:', resData.customer_id)
 
     // 1. 予約を論理削除（status='cancelled'に変更）
-    await setDoc(doc(db, 'reservations', id), {
+    await updateDoc(doc(db, 'reservations', id), {
       status: 'cancelled',
       cancelled_at: Timestamp.now()
-    }, { merge: true })
+    })
     console.log('[MyPage] Reservation status set to cancelled')
 
     // 🟢 2. 【追加】関連するメッセージを「キャンセル扱い」に更新
@@ -276,11 +276,10 @@ const cancelReservation = async (id: string) => {
           })
 
           try {
-            await setDoc(d.ref, {
-              customer_id: msgData.customer_id, // 権限チェックのため必須
+            await updateDoc(d.ref, {
               is_cancelled: true,
               title: newTitle
-            }, { merge: true })
+            })
             console.log('[MyPage] ✅ メッセージ更新成功:', d.id)
           } catch (err: any) {
             console.error('[MyPage] ❌ メッセージ更新失敗:', d.id)
