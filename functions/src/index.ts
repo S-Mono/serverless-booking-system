@@ -4,8 +4,77 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import * as nodemailer from "nodemailer";
 import axios from "axios";
+import * as jwt from "jsonwebtoken";
+import jwkToPem = require("jwk-to-pem");
 
 admin.initializeApp();
+
+/**
+ * JWTを生成してチャネルアクセストークンv2.1を取得
+ */
+const getLineChannelAccessToken = async (): Promise<string | null> => {
+  try {
+    const channelId = process.env.LINE_CHANNEL_ID;
+    const privateKeyStr = process.env.LINE_ASSERTION_PRIVATE_KEY;
+    const kid = process.env.LINE_ASSERTION_KID;
+
+    if (!channelId || !privateKeyStr || !kid) {
+      logger.warn("LINE JWT credentials not configured");
+      return null;
+    }
+
+    // 秘密鍵をJWK形式からPEM形式に変換
+    const privateKeyJWK = JSON.parse(privateKeyStr);
+    const privateKeyPEM = jwkToPem(privateKeyJWK, {private: true});
+
+    // JWTペイロード
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: channelId,
+      sub: channelId,
+      aud: "https://api.line.me/",
+      exp: now + 30 * 60, // 30分後
+      token_exp: 30 * 24 * 60 * 60, // 30日間有効
+    };
+
+    // JWTヘッダー
+    const header = {
+      alg: "RS256",
+      typ: "JWT",
+      kid: kid,
+    };
+
+    // JWTを生成（RS256署名）
+    const token = jwt.sign(payload, privateKeyPEM, {
+      algorithm: "RS256",
+      header: header,
+    });
+
+    logger.info("JWT generated successfully");
+
+    // チャネルアクセストークンv2.1を取得
+    const response = await axios.post(
+      "https://api.line.me/oauth2/v2.1/token",
+      new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        client_assertion: token,
+      }),
+      {
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      }
+    );
+
+    logger.info("Channel access token obtained");
+    return response.data.access_token;
+  } catch (error: unknown) {
+    const errorObj = error as {message?: string; response?: {data?: unknown}};
+    logger.error("Failed to get channel access token", {
+      error: errorObj.message,
+      data: errorObj.response?.data,
+    });
+    return null;
+  }
+};
 
 // メール送信用のトランスポーター設定
 const createTransporter = () => {
@@ -317,13 +386,14 @@ export const deleteUserAccount = onCall(
         });
 
         if (userAccessToken) {
-          // 環境変数から長期チャネルアクセストークンを取得
-          const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+          // JWTを使ってチャネルアクセストークンを取得
+          logger.info("Obtaining channel access token via JWT...");
+          const channelAccessToken = await getLineChannelAccessToken();
 
           if (!channelAccessToken) {
-            logger.warn("LINE_CHANNEL_ACCESS_TOKEN not configured");
+            logger.warn("Failed to obtain channel access token");
           } else {
-            logger.info("Using channel access token from environment");
+            logger.info("Channel access token obtained successfully");
 
             // ユーザーが認可した権限を取り消す
             const deauthorizeResponse = await axios.post(

@@ -148,3 +148,7 @@ vite.config.ts.timestamp-*
 *firebase-adminsdk*.json
 .vercel
 .env*.local
+
+# LINE Assertion Keys
+private-key.json
+public-key.json
