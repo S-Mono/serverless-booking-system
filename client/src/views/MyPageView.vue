@@ -231,37 +231,63 @@ const cancelReservation = async (id: string) => {
     console.log('[MyPage] Reservation customer_id:', resData.customer_id)
 
     // 1. 予約を論理削除（status='cancelled'に変更）
-    await updateDoc(doc(db, 'reservations', id), {
+    await setDoc(doc(db, 'reservations', id), {
       status: 'cancelled',
       cancelled_at: Timestamp.now()
-    })
+    }, { merge: true })
     console.log('[MyPage] Reservation status set to cancelled')
 
     // 🟢 2. 【追加】関連するメッセージを「キャンセル扱い」に更新
     // エラーが発生しても予約キャンセル自体は成功とする（非クリティカル処理）
+    console.log('[MyPage] === メッセージ更新処理開始 ===')
+    console.log('[MyPage] 検索する reservation_id:', id)
+
     try {
       const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
-      const msgSnap = await getDocs(msgQ)
+      console.log('[MyPage] クエリ実行中...')
 
-      console.log('[MyPage] Found messages to update:', msgSnap.size, 'messages')
+      const msgSnap = await getDocs(msgQ)
+      console.log('[MyPage] クエリ完了 - 件数:', msgSnap.size)
 
       if (msgSnap.size > 0) {
+        console.log('[MyPage] メッセージが見つかりました:', msgSnap.size, '件')
+
         // 関連するメッセージがあれば全て更新
         for (const d of msgSnap.docs) {
-          console.log('[MyPage] Updating message:', d.id, 'Current title:', d.data().title)
-          const currentTitle = d.data().title
-          const newTitle = currentTitle.startsWith('【キャンセル済】') 
-            ? currentTitle 
+          const msgData = d.data()
+          console.log('[MyPage] メッセージ詳細:', {
+            id: d.id,
+            title: msgData.title,
+            customer_id: msgData.customer_id,
+            reservation_id: msgData.reservation_id,
+            is_cancelled: msgData.is_cancelled
+          })
+
+          const currentTitle = msgData.title
+          const newTitle = currentTitle.startsWith('【キャンセル済】')
+            ? currentTitle
             : '【キャンセル済】' + currentTitle
-          
+
+          console.log('[MyPage] 更新内容:', {
+            旧タイトル: currentTitle,
+            新タイトル: newTitle,
+            is_cancelled: true
+          })
+
           try {
-            await updateDoc(d.ref, {
+            await setDoc(d.ref, {
               is_cancelled: true,
               title: newTitle
-            })
-            console.log('[MyPage] ✅ Message updated successfully:', d.id)
+            }, { merge: true })
+            console.log('[MyPage] ✅ メッセージ更新成功:', d.id)
           } catch (err: any) {
-            console.error('[MyPage] ❌ Message update failed:', d.id, 'Error:', err.code || err.message, err)
+            console.error('[MyPage] ❌ メッセージ更新失敗:', d.id)
+            console.error('[MyPage] エラー詳細:', {
+              code: err.code,
+              message: err.message,
+              stack: err.stack
+            })
+
             // Firestoreにエラーログを記録
             await addDoc(collection(db, 'error_logs'), {
               context: 'MyPage_CancelReservation_MessageUpdate',
@@ -275,12 +301,38 @@ const cancelReservation = async (id: string) => {
             }).catch(e => console.error('Failed to log error:', e))
           }
         }
-        console.log('[MyPage] All messages processed')
+        console.log('[MyPage] === メッセージ処理完了 ===')
       } else {
-        console.log('[MyPage] No messages found for reservation:', id)
+        console.warn('[MyPage] ⚠️ メッセージが見つかりませんでした')
+        console.log('[MyPage] 検索条件:', { reservation_id: id })
+        console.log('[MyPage] 予約データ:', resData)
+
+        // メッセージが見つからなかったことをログ
+        await addDoc(collection(db, 'error_logs'), {
+          context: 'MyPage_CancelReservation_NoMessages',
+          message: 'No messages found for reservation',
+          reservation_id: id,
+          customer_id: resData.customer_id,
+          user_id: currentUser.value?.uid,
+          timestamp: Timestamp.now()
+        }).catch(e => console.error('Failed to log:', e))
       }
     } catch (msgError: any) {
-      console.error('[MyPage] ❌ Message query failed:', msgError.code || msgError.message, msgError)
+      console.error('[MyPage] ❌ メッセージクエリ失敗')
+      console.error('[MyPage] エラー詳細:', {
+        code: msgError.code,
+        message: msgError.message,
+        stack: msgError.stack
+      })
+
+      await addDoc(collection(db, 'error_logs'), {
+        context: 'MyPage_CancelReservation_QueryFailed',
+        message: msgError.message || String(msgError),
+        error_code: msgError.code || 'unknown',
+        reservation_id: id,
+        user_id: currentUser.value?.uid,
+        timestamp: Timestamp.now()
+      }).catch(e => console.error('Failed to log error:', e))
     }
 
     dialog.alert('予約をキャンセルしました')
