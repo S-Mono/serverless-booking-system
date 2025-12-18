@@ -128,6 +128,19 @@ const autoLoginWithLine = async () => {
     message.value = 'LINEアカウントで認証中...'
 
     await setPersistence(auth, browserLocalPersistence)
+    
+    // チャネル同意の簡略化対応: profileスコープの権限を確認・要求
+    console.log('Checking and requesting profile permission...')
+    const permissionStatus = await liff.permission.query('profile')
+    console.log('Profile permission status:', permissionStatus.state)
+    
+    if (permissionStatus.state === 'prompt') {
+      // 権限がない場合、ユーザーに許可を求める
+      console.log('Requesting profile permission...')
+      await liff.permission.requestAll()
+      console.log('Permission granted')
+    }
+    
     console.log('Getting LINE profile...')
     const profile = await liff.getProfile()
     console.log('LINE profile:', profile)

@@ -67,11 +67,27 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
         
         // ミニアプリは常にログイン状態のはず
         if (liff.isLoggedIn()) {
+          // チャネル同意の簡略化対応: profileスコープの権限を確認
           try {
-            profile.value = await liff.getProfile()
-            console.log('LINE Profile loaded:', profile.value.displayName)
+            console.log('Checking profile permission...')
+            const permissionStatus = await liff.permission.query('profile')
+            console.log('Profile permission status:', permissionStatus.state)
+            
+            if (permissionStatus.state === 'granted') {
+              // 権限が付与済み
+              profile.value = await liff.getProfile()
+              console.log('LINE Profile loaded:', profile.value.displayName)
+            } else if (permissionStatus.state === 'prompt') {
+              // 権限を求める必要がある
+              console.log('Profile permission required, requesting...')
+              // ここでは権限要求せず、後でユーザーアクションで行う
+              console.log('Profile will be loaded after user grants permission')
+            } else {
+              // denied
+              console.warn('Profile permission denied')
+            }
           } catch (e) {
-            console.error('Profile fetch failed', e)
+            console.error('Profile permission check or fetch failed', e)
           }
         } else {
           console.warn('Not logged in (unexpected in Mini App)')
@@ -89,6 +105,41 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
       }
     } finally {
       isInitializing.value = false
+    }
+  }
+
+  /**
+   * プロフィール権限を要求してプロフィールを取得
+   */
+  const requestProfilePermission = async () => {
+    if (!isInitialized.value || !liff.isLoggedIn()) {
+      console.warn('LIFF not initialized or not logged in')
+      return false
+    }
+
+    try {
+      const permissionStatus = await liff.permission.query('profile')
+      
+      if (permissionStatus.state === 'granted') {
+        // 既に権限付与済み
+        if (!profile.value) {
+          profile.value = await liff.getProfile()
+        }
+        return true
+      } else if (permissionStatus.state === 'prompt') {
+        // ユーザーに許可を求める
+        await liff.permission.requestAll()
+        // 権限付与後、プロフィール取得
+        profile.value = await liff.getProfile()
+        return true
+      } else {
+        // denied
+        console.warn('Profile permission denied by user')
+        return false
+      }
+    } catch (e) {
+      console.error('Failed to request profile permission', e)
+      return false
     }
   }
 
@@ -134,6 +185,7 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
     // Actions
     init,
     login,
-    refreshProfile
+    refreshProfile,
+    requestProfilePermission
   }
 })
