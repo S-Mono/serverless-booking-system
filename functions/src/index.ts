@@ -4,67 +4,41 @@ import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import * as nodemailer from "nodemailer";
 import axios from "axios";
-import * as jwt from "jsonwebtoken";
-import jwkToPem from "jwk-to-pem";
 
 admin.initializeApp();
 
 /**
  * JWTを生成してチャネルアクセストークンv2.1を取得
  */
+/**
+ * 短期のチャネルアクセストークンを取得
+ * client_idとclient_secretを使用（JWTアサーション不要）
+ */
 const getLineChannelAccessToken = async (): Promise<string | null> => {
   try {
     const channelId = process.env.LINE_CHANNEL_ID;
-    const privateKeyStr = process.env.LINE_ASSERTION_PRIVATE_KEY;
-    const kid = process.env.LINE_ASSERTION_KID;
+    const channelSecret = process.env.LINE_CHANNEL_SECRET;
 
-    if (!channelId || !privateKeyStr || !kid) {
-      logger.warn("LINE JWT credentials not configured");
+    if (!channelId || !channelSecret) {
+      logger.warn("LINE credentials not configured");
       return null;
     }
 
-    // 秘密鍵をJWK形式からPEM形式に変換
-    const privateKeyJWK = JSON.parse(privateKeyStr);
-    const privateKeyPEM = jwkToPem(privateKeyJWK, {private: true});
+    logger.info("Obtaining short-lived channel access token");
 
-    // JWTペイロード
-    const now = Math.floor(Date.now() / 1000);
-    const payload = {
-      iss: channelId,
-      sub: channelId,
-      aud: "https://api.line.me/",
-      exp: now + 30 * 60, // 30分後
-      token_exp: 30 * 24 * 60 * 60, // 30日間有効
-    };
-
-    // JWTヘッダー
-    const header = {
-      alg: "RS256",
-      typ: "JWT",
-      kid: kid,
-    };
-
-    // JWTを生成（RS256署名）
-    const token = jwt.sign(payload, privateKeyPEM, {
-      algorithm: "RS256",
-      header: header,
-    });
-
-    logger.info("JWT generated successfully");
-
-    // チャネルアクセストークンv2.1を取得
     const response = await axios.post(
-      "https://api.line.me/oauth2/v2.1/token",
+      "https://api.line.me/oauth2/v3/token",
       new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        client_assertion: token,
+        grant_type: "client_credentials",
+        client_id: channelId,
+        client_secret: channelSecret,
       }),
       {
         headers: {"Content-Type": "application/x-www-form-urlencoded"},
       }
     );
 
-    logger.info("Channel access token obtained");
+    logger.info("Channel access token obtained successfully");
     return response.data.access_token;
   } catch (error: unknown) {
     const errorObj = error as {message?: string; response?: {data?: unknown}};

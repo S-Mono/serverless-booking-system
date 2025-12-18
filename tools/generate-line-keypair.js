@@ -25,7 +25,7 @@ const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
   }
 });
 
-// JWK形式に変換（LINE仕様に準拠）
+// JWK形式に変換（LINE仕様に準拠 - プロパティ順序も一致させる）
 const publicJWK = {
   kty: publicKey.kty,
   e: publicKey.e,
@@ -34,9 +34,18 @@ const publicJWK = {
   use: 'sig'
 };
 
+// LINEドキュメントと同じプロパティ順序で秘密鍵を構築
 const privateJWK = {
-  ...privateKey,
   alg: 'RS256',
+  d: privateKey.d,
+  dp: privateKey.dp,
+  dq: privateKey.dq,
+  e: privateKey.e,
+  kty: privateKey.kty,
+  n: privateKey.n,
+  p: privateKey.p,
+  q: privateKey.q,
+  qi: privateKey.qi,
   use: 'sig'
 };
 
