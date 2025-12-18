@@ -317,31 +317,15 @@ export const deleteUserAccount = onCall(
         });
 
         if (userAccessToken) {
-          const channelId = process.env.LINE_CHANNEL_ID;
-          const channelSecret = process.env.LINE_CHANNEL_SECRET;
+          // 環境変数から長期チャネルアクセストークンを取得
+          const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-          if (!channelId || !channelSecret) {
-            logger.warn("LINE credentials not configured");
+          if (!channelAccessToken) {
+            logger.warn("LINE_CHANNEL_ACCESS_TOKEN not configured");
           } else {
-            logger.info("Obtaining channel access token...");
+            logger.info("Using channel access token from environment");
 
-            // チャネルアクセストークン取得
-            const tokenResponse = await axios.post(
-              "https://api.line.me/oauth2/v2.1/token",
-              new URLSearchParams({
-                grant_type: "client_credentials",
-                client_id: channelId,
-                client_secret: channelSecret,
-              }),
-              {
-                headers: {"Content-Type": "application/x-www-form-urlencoded"},
-              }
-            );
-
-            const channelAccessToken = tokenResponse.data.access_token;
-            logger.info("Channel access token obtained");
-
-            // ユーザーが認可した権限を取り消す（正しいエンドポイント）
+            // ユーザーが認可した権限を取り消す
             const deauthorizeResponse = await axios.post(
               "https://api.line.me/user/v1/deauthorize",
               {
