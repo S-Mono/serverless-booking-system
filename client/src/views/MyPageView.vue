@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { db, auth } from '../lib/firebase'
-import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc, updateDoc } from 'firebase/firestore'
+import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc, updateDoc, addDoc } from 'firebase/firestore'
 import { onAuthStateChanged, signOut, type Unsubscribe } from 'firebase/auth'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
@@ -262,6 +262,17 @@ const cancelReservation = async (id: string) => {
             console.log('[MyPage] ✅ Message updated successfully:', d.id)
           } catch (err: any) {
             console.error('[MyPage] ❌ Message update failed:', d.id, 'Error:', err.code || err.message, err)
+            // Firestoreにエラーログを記録
+            await addDoc(collection(db, 'error_logs'), {
+              context: 'MyPage_CancelReservation_MessageUpdate',
+              message: err.message || String(err),
+              error_code: err.code || 'unknown',
+              message_id: d.id,
+              reservation_id: id,
+              user_id: currentUser.value?.uid,
+              timestamp: Timestamp.now(),
+              userAgent: navigator.userAgent
+            }).catch(e => console.error('Failed to log error:', e))
           }
         }
         console.log('[MyPage] All messages processed')
