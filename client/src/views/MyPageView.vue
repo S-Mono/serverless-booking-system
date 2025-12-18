@@ -18,9 +18,8 @@ interface Reservation {
   id: string
   start_at: Timestamp
   menu_items: { title: string; price: number }[]
-  status: string
-  is_cancelled?: boolean
-  cancelled_at?: Date
+  status: 'pending' | 'confirmed' | 'cancelled'
+  cancelled_at?: Timestamp
 }
 
 const reservations = ref<Reservation[]>([])
@@ -110,7 +109,7 @@ const fetchReservations = async (userId: string) => {
     const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
     // JavaScript側でソート & キャンセル済みを除外
     reservations.value = results
-      .filter(res => !res.is_cancelled) // キャンセル済みは除外
+      .filter(res => res.status !== 'cancelled') // キャンセル済みは除外
       .sort((a, b) => a.start_at.seconds - b.start_at.seconds)
     console.log('[MyPage] Reservations loaded:', reservations.value.length)
 
@@ -231,12 +230,12 @@ const cancelReservation = async (id: string) => {
     console.log('[MyPage] Reservation data:', resData)
     console.log('[MyPage] Reservation customer_id:', resData.customer_id)
 
-    // 1. 予約を論理削除（is_cancelledフラグを追加）
+    // 1. 予約を論理削除（status='cancelled'に変更）
     await updateDoc(doc(db, 'reservations', id), {
-      is_cancelled: true,
-      cancelled_at: new Date()
+      status: 'cancelled',
+      cancelled_at: Timestamp.now()
     })
-    console.log('[MyPage] Reservation marked as cancelled')
+    console.log('[MyPage] Reservation status set to cancelled')
 
     // 🟢 2. 【追加】関連するメッセージを「キャンセル扱い」に更新
     // エラーが発生しても予約キャンセル自体は成功とする（非クリティカル処理）
@@ -250,11 +249,12 @@ const cancelReservation = async (id: string) => {
         // 関連するメッセージがあれば全て更新
         const updatePromises = msgSnap.docs.map(d => {
           console.log('[MyPage] Updating message:', d.id, 'Title:', d.data().title)
+          const currentTitle = d.data().title
           return updateDoc(d.ref, {
             is_cancelled: true, // キャンセル済みフラグ
-            title: d.data().title.startsWith('【キャンセル済】') 
-              ? d.data().title 
-              : '【キャンセル済】' + d.data().title // タイトルもわかりやすく変更
+            title: currentTitle.startsWith('【キャンセル済】') 
+              ? currentTitle 
+              : '【キャンセル済】' + currentTitle // タイトルもわかりやすく変更
           }).catch((err: any) => {
             // 個別の更新エラーを静かに処理（permission-deniedなど）
             console.warn('[MyPage] Single message update failed:', d.id, err.code || err.message)
