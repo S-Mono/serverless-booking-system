@@ -7,6 +7,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
 import { useRouter } from 'vue-router'
+import liff from '@line/liff'
 
 const dialog = useDialogStore()
 const userStore = useUserStore()
@@ -390,6 +391,17 @@ const deleteAccount = async () => {
     // Cloud Functionを呼び出し
     const deleteUserAccount = httpsCallable(functions, 'deleteUserAccount')
     await deleteUserAccount()
+
+    // LINEミニアプリの場合、プロフィール権限を削除
+    if (liff.isInClient() && liff.isLoggedIn()) {
+      try {
+        await liff.permission.revokeAll()
+        console.log('LINE profile permissions revoked')
+      } catch (error) {
+        console.error('Failed to revoke LINE permissions:', error)
+        // 権限削除失敗は退会処理を妨げない
+      }
+    }
 
     await dialog.alert('退会処理が完了しました。\nご利用ありがとうございました。', '退会完了')
 
