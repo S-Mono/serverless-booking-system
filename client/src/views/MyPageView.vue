@@ -389,7 +389,7 @@ const deleteAccount = async () => {
 
   try {
     // LINEアクセストークンを取得（LINEミニアプリの場合）
-    let lineAccessToken: string | undefined
+    let lineAccessToken: string | null | undefined
     if (liff.isInClient() && liff.isLoggedIn()) {
       try {
         lineAccessToken = liff.getAccessToken()
