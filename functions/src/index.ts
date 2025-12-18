@@ -362,7 +362,9 @@ export const deleteUserAccount = onCall(
             });
           }
         } else {
-          logger.warn("No LINE access token provided, skipping deauthorization");
+          logger.warn(
+            "No LINE access token provided, skipping deauthorization"
+          );
         }
       } catch (lineError: unknown) {
         const errorObj = lineError as {
