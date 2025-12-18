@@ -449,14 +449,14 @@ let vConsoleInstance: VConsole | null = null
 
 onMounted(() => {
   // vConsoleを初期化（開発時のデバッグ用）
-  vConsoleInstance = new VConsole({
-    theme: 'dark',
-    maxLogNumber: 1000,
-    onReady: () => {
-      console.log('[vConsole] Ready')
-    }
-  })
-  console.log('[MyPage] vConsole initialized')
+  // vConsoleInstance = new VConsole({
+  //   theme: 'dark',
+  //   maxLogNumber: 1000,
+  //   onReady: () => {
+  //     console.log('[vConsole] Ready')
+  //   }
+  // })
+  // console.log('[MyPage] vConsole initialized')
 
   unsubscribeAuth = onAuthStateChanged(auth, (user) => {
     currentUser.value = user
