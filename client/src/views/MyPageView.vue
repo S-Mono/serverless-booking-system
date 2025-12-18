@@ -277,6 +277,7 @@ const cancelReservation = async (id: string) => {
 
           try {
             await setDoc(d.ref, {
+              customer_id: msgData.customer_id, // 権限チェックのため必須
               is_cancelled: true,
               title: newTitle
             }, { merge: true })
