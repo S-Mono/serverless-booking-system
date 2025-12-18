@@ -237,18 +237,27 @@ const cancelReservation = async (id: string) => {
       const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
       const msgSnap = await getDocs(msgQ)
 
-      // 関連するメッセージがあれば全て更新
-      const updatePromises = msgSnap.docs.map(d =>
-        updateDoc(d.ref, {
-          is_cancelled: true, // キャンセル済みフラグ
-          title: '【キャンセル済】' + d.data().title // タイトルもわかりやすく変更
-        }).catch((err: any) => {
-          // 個別の更新エラーを静かに処理（permission-deniedなど）
-          console.warn('[MyPage] Single message update failed:', err.code || err.message)
+      console.log('[MyPage] Found messages to update:', msgSnap.size, 'messages')
+
+      if (msgSnap.size > 0) {
+        // 関連するメッセージがあれば全て更新
+        const updatePromises = msgSnap.docs.map(d => {
+          console.log('[MyPage] Updating message:', d.id, 'Title:', d.data().title)
+          return updateDoc(d.ref, {
+            is_cancelled: true, // キャンセル済みフラグ
+            title: d.data().title.startsWith('【キャンセル済】') 
+              ? d.data().title 
+              : '【キャンセル済】' + d.data().title // タイトルもわかりやすく変更
+          }).catch((err: any) => {
+            // 個別の更新エラーを静かに処理（permission-deniedなど）
+            console.warn('[MyPage] Single message update failed:', d.id, err.code || err.message)
+          })
         })
-      )
-      await Promise.all(updatePromises)
-      console.log('[MyPage] Messages updated successfully')
+        await Promise.all(updatePromises)
+        console.log('[MyPage] Messages updated successfully')
+      } else {
+        console.log('[MyPage] No messages found for reservation:', id)
+      }
     } catch (msgError: any) {
       // クエリ自体のエラーも静かに処理（AbortErrorなど）
       if (msgError.name !== 'AbortError') {
