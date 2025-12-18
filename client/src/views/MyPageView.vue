@@ -244,11 +244,13 @@ const cancelReservation = async (id: string) => {
     console.log('[MyPage] 検索する reservation_id:', id)
 
     try {
+      console.log('[MyPage] クエリ作成中...')
       const msgQ = query(collection(db, 'messages'), where('reservation_id', '==', id))
-      console.log('[MyPage] クエリ実行中...')
+      console.log('[MyPage] クエリ作成完了')
 
+      console.log('[MyPage] getDocs実行中...')
       const msgSnap = await getDocs(msgQ)
-      console.log('[MyPage] クエリ完了 - 件数:', msgSnap.size)
+      console.log('[MyPage] getDocs完了 - 件数:', msgSnap.size)
 
       if (msgSnap.size > 0) {
         console.log('[MyPage] メッセージが見つかりました:', msgSnap.size, '件')
@@ -328,19 +330,26 @@ const cancelReservation = async (id: string) => {
       }
     } catch (msgError: any) {
       console.error('[MyPage] ❌ メッセージクエリ失敗')
-      console.error('[MyPage] エラー詳細:', {
-        code: msgError.code,
-        message: msgError.message,
-        stack: msgError.stack
-      })
+      console.error('[MyPage] エラータイプ:', msgError.name)
+      console.error('[MyPage] エラーコード:', msgError.code)
+      console.error('[MyPage] エラーメッセージ:', msgError.message)
+      console.error('[MyPage] エラー全体:', msgError)
+
+      // Firestoreインデックスエラーの場合は特別に処理
+      if (msgError.code === 'failed-precondition' || msgError.message?.includes('index')) {
+        console.error('[MyPage] 🔥 Firestoreインデックスエラーの可能性があります')
+        console.error('[MyPage] Firebaseコンソールでインデックスを作成してください')
+      }
 
       await addDoc(collection(db, 'error_logs'), {
         context: 'MyPage_CancelReservation_QueryFailed',
         message: msgError.message || String(msgError),
         error_code: msgError.code || 'unknown',
+        error_name: msgError.name || 'unknown',
         reservation_id: id,
         user_id: currentUser.value?.uid,
-        timestamp: Timestamp.now()
+        timestamp: Timestamp.now(),
+        full_error: JSON.stringify(msgError, Object.getOwnPropertyNames(msgError))
       }).catch(e => console.error('Failed to log error:', e))
     }
 
