@@ -307,12 +307,10 @@ export const deleteUserAccount = onCall(
 
       // 1. LINE連携解除（権限取り消し）
       try {
-        // ユーザードキュメントからLINE情報を取得
-        const customerDoc = await db.collection("customers").doc(userId).get();
-        const customerData = customerDoc.data();
+        // クライアント側から送信されたユーザーアクセストークン
+        const userAccessToken = request.data?.lineAccessToken;
 
-        if (customerData?.line_user_id) {
-          const lineUserId = customerData.line_user_id;
+        if (userAccessToken) {
           const channelId = process.env.LINE_CHANNEL_ID;
           const channelSecret = process.env.LINE_CHANNEL_SECRET;
 
@@ -332,22 +330,23 @@ export const deleteUserAccount = onCall(
               }
             );
 
-            const accessToken = tokenResponse.data.access_token;
+            const channelAccessToken = tokenResponse.data.access_token;
 
-            // LINE権限取り消しAPI呼び出し
+            // ユーザーが認可した権限を取り消す（正しいエンドポイント）
             await axios.post(
-              "https://api.line.me/oauth2/v2.1/revoke",
-              new URLSearchParams({
-                access_token: accessToken,
-                client_id: channelId,
-                client_secret: channelSecret,
+              "https://api.line.me/user/v1/deauthorize",
+              JSON.stringify({
+                userAccessToken: userAccessToken,
               }),
               {
-                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${channelAccessToken}`,
+                },
               }
             );
 
-            logger.info("LINE authorization revoked", {userId, lineUserId});
+            logger.info("LINE authorization revoked successfully", {userId});
           }
         }
       } catch (lineError: unknown) {

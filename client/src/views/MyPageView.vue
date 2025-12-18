@@ -7,6 +7,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
 import { useRouter } from 'vue-router'
+import liff from '@line/liff'
 
 const dialog = useDialogStore()
 const userStore = useUserStore()
@@ -387,9 +388,20 @@ const deleteAccount = async () => {
   isDeletingAccount.value = true
 
   try {
+    // LINEアクセストークンを取得（LINEミニアプリの場合）
+    let lineAccessToken: string | undefined
+    if (liff.isInClient() && liff.isLoggedIn()) {
+      try {
+        lineAccessToken = liff.getAccessToken()
+        console.log('LINE access token obtained for deauthorization')
+      } catch (error) {
+        console.error('Failed to get LINE access token:', error)
+      }
+    }
+
     // Cloud Functionを呼び出し
     const deleteUserAccount = httpsCallable(functions, 'deleteUserAccount')
-    await deleteUserAccount()
+    await deleteUserAccount({ lineAccessToken })
 
     await dialog.alert('退会処理が完了しました。\nご利用ありがとうございました。', '退会完了')
 
