@@ -4,9 +4,9 @@ import { db, auth } from '../lib/firebase'
 import { collection, getDocs, setDoc, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
 import { useRouter } from 'vue-router'
 import { useDialogStore } from '../stores/dialog'
-// 審査用：プッシュ通知機能を一時的に無効化
-// import { messaging, VAPID_KEY } from '../lib/firebase'
-// import { getToken, onMessage } from 'firebase/messaging'
+// プッシュ通知機能（管理者専用・LINEブラウザでは動作しない）
+import { messaging, VAPID_KEY } from '../lib/firebase'
+import { getToken, onMessage } from 'firebase/messaging'
 import * as XLSX from 'xlsx-js-style'
 
 const router = useRouter()
@@ -339,6 +339,12 @@ const fetchHistoryReservations = () => {
 // 🔔 1. 画面ロード時に現在の通知設定を確認する
 const checkNotificationStatus = async () => {
   try {
+    // messagingがサポートされていない環境（LINEブラウザなど）では無効化
+    if (!messaging) {
+      isNotifyEnabled.value = false
+      return
+    }
+
     // まずブラウザの許可状態を確認
     if (Notification.permission !== 'granted') {
       isNotifyEnabled.value = false
@@ -406,12 +412,17 @@ const toggleNotification = async () => {
 // 🔔 3. 通知ON処理 (既存の requestNotificationPermission を少し修正)
 const requestNotificationPermission = async () => {
   try {
+    // messagingがサポートされていない環境では通知を有効化できない
+    if (!messaging) {
+      await dialog.alert('この環境ではプッシュ通知がサポートされていません')
+      return
+    }
+
     const permission = await Notification.requestPermission()
     console.log('requestNotificationPermission - Notification.permission:', permission)
     if (permission === 'granted') {
       console.log('Getting FCM token...')
-      // const token = await getToken(messaging, { vapidKey: VAPID_KEY })
-      const token = null // 審査用に無効化
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY })
       console.log('FCM token obtained:', token ? token.substring(0, 20) + '...' : 'null')
       if (token) {
         // 既にDBに存在するかチェック（重複登録防止）
@@ -492,8 +503,12 @@ const requestNotificationPermission = async () => {
 // 🔔 4. 通知OFF処理 (新規)
 const turnOffNotification = async () => {
   try {
-    // const token = await getToken(messaging, { vapidKey: VAPID_KEY })
-    const token = null // 審査用に無効化
+    // messagingがサポートされていない環境では何もしない
+    if (!messaging) {
+      return
+    }
+
+    const token = await getToken(messaging, { vapidKey: VAPID_KEY })
     if (token) {
       // DBから削除
       await deleteDoc(doc(db, 'admin_tokens', token))
@@ -994,7 +1009,10 @@ onMounted(async () => {
     }
 
     try {
-      unregisterFcmOnMessage = onMessage(messaging, fcmHandler) as unknown as () => void
+      // messagingがサポートされている環境のみでonMessageを登録
+      if (messaging) {
+        unregisterFcmOnMessage = onMessage(messaging, fcmHandler) as unknown as () => void
+      }
     } catch (e) {
       console.warn('onMessage registration failed', e)
     }
@@ -1462,7 +1480,7 @@ const exportReservationsToExcel = async () => {
           <input type="tel" v-model="newReservation.customer_phone" @input="handlePhoneInput"
             :class="{ 'input-error': validationErrors.customer_phone }" placeholder="例: 090-1234-5678">
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-          }}</span>
+            }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
