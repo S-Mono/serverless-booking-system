@@ -125,6 +125,11 @@ const goToMessages = () => {
   closeMenu()
   router.push('/messages')
 }
+
+const retryInit = async () => {
+  lineAuthStore.error = null
+  await lineAuthStore.init()
+}
 </script>
 
 <template>
@@ -132,9 +137,16 @@ const goToMessages = () => {
   <div v-if="lineAuthStore.isInitializing" class="app-loading">
     <img src="/LINE_spinner_dark.svg" alt="読み込み中" class="loading-spinner" />
     <p class="loading-text">読み込み中...</p>
-    <p v-if="lineAuthStore.error" class="error-text">
-      {{ lineAuthStore.error }}
-    </p>
+  </div>
+
+  <!-- LINE初期化エラー画面 -->
+  <div v-else-if="lineAuthStore.error" class="app-error">
+    <div class="error-container">
+      <div class="error-icon">⚠️</div>
+      <h2 class="error-title">初期化エラー</h2>
+      <p class="error-message">{{ lineAuthStore.error }}</p>
+      <button @click="retryInit" class="retry-btn">再試行</button>
+    </div>
   </div>
 
   <!-- メインコンテンツ -->
@@ -205,6 +217,67 @@ const goToMessages = () => {
   font-size: 1.2rem;
   font-weight: bold;
   letter-spacing: 0.1em;
+}
+
+/* エラー画面 */
+.app-error {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 2rem;
+}
+
+.error-container {
+  background: white;
+  border-radius: 16px;
+  padding: 3rem 2rem;
+  max-width: 500px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.error-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.error-title {
+  color: #e74c3c;
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+  font-weight: bold;
+}
+
+.error-message {
+  color: #555;
+  font-size: 1rem;
+  line-height: 1.6;
+  margin-bottom: 2rem;
+  word-break: break-word;
+}
+
+.retry-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  padding: 0.8rem 2rem;
+  font-size: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.retry-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.retry-btn:active {
+  transform: translateY(0);
 }
 
 .error-text {
