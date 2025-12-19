@@ -12,7 +12,7 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
   const profile = ref<any>(null) // LINEプロフィール情報
   const error = ref<string | null>(null)
   const isInitialized = ref(false) // 初期化完了フラグ
-  const isInitializing = ref(false) // 初期化中フラグ（ローディング表示用）
+  const isInitializing = ref(true) // 初期化中フラグ（ローディング表示用）※初期値trueで真っ白画面を防ぐ
 
   /**
    * LINEミニアプリの初期化
