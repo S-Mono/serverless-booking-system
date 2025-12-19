@@ -186,6 +186,16 @@ const autoLoginWithLine = async () => {
       stack: error.stack
     })
 
+    // アクセストークンが無効な場合、LIFFログアウトして再ログインを促す
+    if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-disabled') {
+      console.log('Access token may be invalid, clearing LIFF session...')
+      lineAuthStore.logout()
+      message.value = 'アクセストークンが無効です。再度ログインしてください。'
+      miniAppLoading.value = false
+      socialAuth.value = null
+      return
+    }
+
     // エラーレポート送信
     const { reportLiffError } = await import('../lib/errorReporter')
     reportLiffError(error, 'login')

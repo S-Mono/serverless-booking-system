@@ -6,6 +6,7 @@ import { onAuthStateChanged, signOut, type Unsubscribe } from 'firebase/auth'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
+import { useLineAuthStore } from '../stores/lineAuth'
 import { useRouter } from 'vue-router'
 import liff from '@line/liff'
 import VConsole from 'vconsole'
@@ -536,6 +537,13 @@ const deleteAccount = async () => {
 
     // ログアウトフラグを設定（5秒間自動ログインをスキップ）
     localStorage.setItem('logout_flag', Date.now().toString())
+
+    // LIFFログアウト（アクセストークンをクリア）
+    const lineAuthStore = useLineAuthStore()
+    if (lineAuthStore.isLineApp) {
+      console.log('Logging out from LIFF...')
+      lineAuthStore.logout()
+    }
 
     // ログアウトしてログイン画面へ
     await signOut(auth)

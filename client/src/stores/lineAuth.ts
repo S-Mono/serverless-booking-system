@@ -175,6 +175,28 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
     }
   }
 
+  /**
+   * LIFFログアウト
+   * 退会時やトークン無効時にアクセストークンをクリアする
+   */
+  const logout = () => {
+    if (!isInitialized.value) {
+      console.warn('LINE not initialized')
+      return
+    }
+
+    try {
+      if (liff.isLoggedIn()) {
+        console.log('Logging out from LIFF...')
+        liff.logout()
+        profile.value = null
+        console.log('LIFF logout completed')
+      }
+    } catch (e) {
+      console.error('LIFF logout failed', e)
+    }
+  }
+
   return {
     // State
     isLineApp,
@@ -185,6 +207,7 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
     // Actions
     init,
     login,
+    logout,
     refreshProfile,
     requestProfilePermission
   }
