@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import liff from '@line/liff'
+import { reportLiffError } from '../lib/errorReporter'
 
 /**
  * LINEミニアプリ認証用Store
@@ -27,11 +28,17 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
     isInitializing.value = true
 
     // 🟢 タイムアウト処理（10秒で強制的に終了）
-    const timeoutId = setTimeout(() => {
+    const timeoutId = setTimeout(async () => {
       if (isInitializing.value) {
         console.error('LINE initialization timeout (10s)')
         error.value = 'LINE初期化がタイムアウトしました。ページを更新してください。'
         isInitializing.value = false
+        // 🔥 Firestoreにタイムアウトエラーを記録
+        await reportLiffError(
+          new Error('LINE initialization timeout after 10 seconds'),
+          'init',
+          import.meta.env.VITE_MINI_APP_ID
+        ).catch(e => console.error('Failed to report timeout error:', e))
       }
     }, 10000)
 
@@ -41,6 +48,12 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
         const errorMsg = 'VITE_MINI_APP_ID is not defined. Please check .env file or Vercel environment variables.'
         console.error(errorMsg)
         error.value = errorMsg
+        // 🔥 Firestoreに環境変数未定義エラーを記録
+        await reportLiffError(
+          new Error(errorMsg),
+          'init',
+          'undefined'
+        ).catch(e => console.error('Failed to report env error:', e))
         // 審査・開発環境でエラーを明示的に表示
         if (import.meta.env.DEV || import.meta.env.MODE === 'staging') {
           alert(errorMsg)
@@ -99,6 +112,12 @@ export const useLineAuthStore = defineStore('lineAuth', () => {
       clearTimeout(timeoutId)
       console.error('LINE Mini App init failed', err)
       error.value = err.message
+      // 🔥 Firestoreにliff.init()失敗エラーを記録
+      await reportLiffError(
+        err,
+        'init',
+        import.meta.env.VITE_MINI_APP_ID
+      ).catch(e => console.error('Failed to report init error:', e))
       // エラー時もアラート表示
       if (import.meta.env.DEV || import.meta.env.MODE === 'staging') {
         alert(`LINE初期化エラー: ${err.message}`)
