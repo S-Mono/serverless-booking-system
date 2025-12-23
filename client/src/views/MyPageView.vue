@@ -495,21 +495,6 @@ const changePassword = async () => {
     isChangingPassword.value = false
   }
 }
-    isContactFormOpen.value = false
-  } catch (error: any) {
-    // AbortErrorは無視
-    if (error.name === 'AbortError') {
-      console.log('[MyPage] Contact form aborted')
-      return
-    }
-    console.error('お問い合わせ送信エラー:', error)
-    const errorMessage = error?.message || '不明なエラー'
-    const errorCode = error?.code || ''
-    dialog.alert(`送信に失敗しました。\nエラー: ${errorCode}\n${errorMessage}\n\n時間をおいて再度お試しください。`, 'エラー')
-  } finally {
-    isSendingContact.value = false
-  }
-}
 
 // 🟢 Authリスナーのクリーンアップ用
 let unsubscribeAuth: Unsubscribe | null = null
