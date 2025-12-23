@@ -123,7 +123,7 @@ const fetchReservations = async (userId: string) => {
       const data = docSnap.data()
       nameKanji.value = data.name_kanji || ''
       nameKana.value = data.name_kana || ''
-      phoneNumber.value = data.phone_number || ''
+      phoneNumber.value = data.phone_number ? formatPhoneNumber(data.phone_number) : ''
       preferredCategory.value = data.preferred_category || 'barber'
       // 未入力なら開く、入力済みなら閉じる
       isProfileOpen.value = !nameKana.value || !phoneNumber.value
@@ -137,7 +137,7 @@ const fetchReservations = async (userId: string) => {
           const data = custSnap.docs[0]!.data()
           nameKanji.value = data.name_kanji || ''
           nameKana.value = data.name_kana || ''
-          phoneNumber.value = data.phone_number || ''
+          phoneNumber.value = data.phone_number ? formatPhoneNumber(data.phone_number) : ''
           preferredCategory.value = data.preferred_category || 'barber'
           // 未入力なら開く、入力済みなら閉じる
           isProfileOpen.value = !nameKana.value || !phoneNumber.value
@@ -197,10 +197,13 @@ const saveProfile = async () => {
 
   isSavingProfile.value = true
   try {
+    // 電話番号からハイフンを除去して保存
+    const phoneNumberToSave = phoneNumber.value.replace(/[^0-9]/g, '')
+
     await setDoc(doc(db, 'customers', currentUser.value.uid), {
       name_kanji: nameKanji.value,
       name_kana: nameKana.value,
-      phone_number: phoneNumber.value,
+      phone_number: phoneNumberToSave,
       preferred_category: preferredCategory.value,
       is_existing_customer: true,
       updated_at: Timestamp.now()

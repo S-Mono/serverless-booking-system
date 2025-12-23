@@ -69,7 +69,21 @@ const isEditing = ref(false)
 const editingId = ref<string | null>(null)
 
 const newReservation = ref({
-  staff_id: '', start_time: '', customer_name: '', customer_phone: '', menu_id: '', note: ''
+  staff_id: '', start_time: '', customer_name: '', customer_phone: '', customer_id: '', menu_id: '', note: ''
+})
+
+// 顧客サジェスト用
+const customerSuggestions = ref<Array<{ id: string, name: string, phone: string }>>([])
+const showSuggestions = ref(false)
+
+// 顧客登録モーダル用
+const showCustomerModal = ref(false)
+const newCustomer = ref({
+  name_kana: '',
+  phone_number: '',
+  memo: '',
+  preferred_category: 'barber' as 'barber' | 'beauty',
+  is_existing_customer: true
 })
 
 // バリデーションエラー管理
@@ -577,9 +591,91 @@ const formatPhoneNumber = (value: string) => {
   return numbers
 }
 
-const handlePhoneInput = (event: Event) => {
+const handlePhoneInput = async (event: Event) => {
   const input = event.target as HTMLInputElement
   newReservation.value.customer_phone = formatPhoneNumber(input.value)
+
+  // 顧客サジェスト検索
+  const phoneDigits = input.value.replace(/\D/g, '')
+  if (phoneDigits.length >= 10) {
+    try {
+      const customersSnap = await getDocs(collection(db, 'customers'))
+      const matches = customersSnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((c: any) => {
+          const cPhone = (c.phone_number || '').replace(/\D/g, '')
+          return cPhone.includes(phoneDigits) && !c.deleted_at
+        })
+        .slice(0, 5)
+
+      customerSuggestions.value = matches.map((c: any) => ({
+        id: c.id,
+        name: c.name_kana || '名前なし',
+        phone: c.phone_number || ''
+      }))
+      showSuggestions.value = customerSuggestions.value.length > 0
+    } catch (e) {
+      console.error('顧客検索エラー:', e)
+    }
+  } else {
+    customerSuggestions.value = []
+    showSuggestions.value = false
+  }
+}
+
+const selectCustomer = (customer: { id: string, name: string, phone: string }) => {
+  newReservation.value.customer_id = customer.id
+  newReservation.value.customer_name = customer.name
+  newReservation.value.customer_phone = customer.phone
+  customerSuggestions.value = []
+  showSuggestions.value = false
+}
+
+// 顧客登録モーダルを開く
+const openCustomerModal = () => {
+  newCustomer.value = {
+    name_kana: '',
+    phone_number: '',
+    memo: '',
+    preferred_category: 'barber',
+    is_existing_customer: true
+  }
+  showCustomerModal.value = true
+}
+
+// 顧客を保存
+const saveCustomer = async () => {
+  if (!newCustomer.value.name_kana) {
+    dialog.alert('名前(カナ)は必須です')
+    return
+  }
+
+  try {
+    // 電話番号からハイフンを除去して保存
+    const phoneNumberToSave = newCustomer.value.phone_number.replace(/[^0-9]/g, '')
+
+    const customerData = {
+      name_kana: newCustomer.value.name_kana,
+      phone_number: phoneNumberToSave,
+      memo: newCustomer.value.memo || '',
+      preferred_category: newCustomer.value.preferred_category,
+      is_existing_customer: newCustomer.value.is_existing_customer,
+      created_at: Timestamp.now(),
+      deleted_at: null
+    }
+
+    const docRef = await addDoc(collection(db, 'customers'), customerData)
+
+    // 予約入力モーダルに反映（フォーマット済み）
+    newReservation.value.customer_id = docRef.id
+    newReservation.value.customer_name = newCustomer.value.name_kana
+    newReservation.value.customer_phone = formatPhoneNumber(phoneNumberToSave)
+    dialog.alert('顧客を登録しました')
+    showCustomerModal.value = false
+  } catch (e) {
+    console.error('顧客登録エラー:', e)
+    dialog.alert('保存に失敗しました')
+  }
 }
 
 const submitReservation = async () => {
@@ -590,6 +686,7 @@ const submitReservation = async () => {
     customer_name: '',
     customer_phone: ''
   }
+  showSuggestions.value = false
 
   // バリデーションチェック
   let hasError = false
@@ -620,14 +717,23 @@ const submitReservation = async () => {
   if (!menu) return
   const startDate = new Date(newReservation.value.start_time)
   const endDate = new Date(startDate.getTime() + menu.duration_min * 60000)
-  const payload = {
+
+  // 電話番号からハイフンを除去して保存
+  const phoneNumberToSave = newReservation.value.customer_phone.replace(/[^0-9]/g, '')
+
+  const payload: any = {
     staff_id: newReservation.value.staff_id,
     start_at: Timestamp.fromDate(startDate),
     end_at: Timestamp.fromDate(endDate),
     customer_name: newReservation.value.customer_name,
-    customer_phone: newReservation.value.customer_phone,
+    customer_phone: phoneNumberToSave,
     menu_items: [{ title: menu.title, duration: menu.duration_min, price: getTaxPrice(menu.price) }],
     source: 'phone', note: newReservation.value.note || '', status: 'confirmed'
+  }
+
+  // customer_idがあれば追加
+  if (newReservation.value.customer_id) {
+    payload.customer_id = newReservation.value.customer_id
   }
   try {
     if (isEditing.value && editingId.value) {
@@ -812,11 +918,14 @@ const openEditModal = (res: Reservation) => {
     staff_id: res.staff_id,
     start_time: toLocalISOString(res.start_at.toDate()),
     customer_name: res.customer_name || '',
-    customer_phone: res.customer_phone || '',
+    customer_phone: formatPhoneNumber(res.customer_phone || ''),
+    customer_id: res.customer_id || '',
     menu_id: matchedMenu ? matchedMenu.id : '',
     note: res.note || ''
   }
   isEditing.value = true; editingId.value = res.id; showDetailModal.value = false; showModal.value = true
+  customerSuggestions.value = []
+  showSuggestions.value = false
 }
 
 const getLeftPosition = (startTs: Timestamp) => {
@@ -1479,11 +1588,21 @@ const exportReservationsToExcel = async () => {
           <input type="text" v-model="newReservation.customer_name"
             :class="{ 'input-error': validationErrors.customer_name }" placeholder="例: 山田様">
           <span v-if="validationErrors.customer_name" class="error-message">{{ validationErrors.customer_name }}</span>
+          <button class="add-customer-btn" @click="openCustomerModal">➕ 顧客を新規登録</button>
         </div>
         <div class="form-group">
           <label>電話番号 <span style="color: #e74c3c;">*</span></label>
-          <input type="tel" v-model="newReservation.customer_phone" @input="handlePhoneInput"
-            :class="{ 'input-error': validationErrors.customer_phone }" placeholder="例: 090-1234-5678">
+          <div class="suggest-wrapper">
+            <input type="tel" v-model="newReservation.customer_phone" @input="handlePhoneInput"
+              :class="{ 'input-error': validationErrors.customer_phone }" placeholder="例: 090-1234-5678">
+            <div v-if="showSuggestions" class="suggestions-dropdown">
+              <div v-for="customer in customerSuggestions" :key="customer.id" class="suggestion-item"
+                @click="selectCustomer(customer)">
+                <span class="customer-name">{{ customer.name }}</span>
+                <span class="customer-phone">{{ customer.phone }}</span>
+              </div>
+            </div>
+          </div>
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
           }}</span>
         </div>
@@ -1516,10 +1635,10 @@ const exportReservationsToExcel = async () => {
             <button v-if="selectedReservation.customer_id" class="link-text-btn" @click="goToCustomerDetail">➡
               顧客詳細へ</button>
             <button v-if="selectedReservation.customer_id" class="link-text-btn"
-              @click="goToRecords(selectedReservation.customer_id)">📋
-              カルテを見る</button>
+              @click="goToRecords(selectedReservation.customer_id)">➡ カルテを見る</button>
           </div>
-          <div class="detail-row"><span class="label">電話:</span> {{ selectedReservation.customer_phone || 'なし' }}</div>
+          <div class="detail-row"><span class="label">電話:</span> {{ selectedReservation.customer_phone ?
+            formatPhoneNumber(selectedReservation.customer_phone) : 'なし' }}</div>
           <div class="detail-row"><span class="label">担当:</span> {{ getStaffName(selectedReservation.staff_id) }}</div>
           <div class="detail-row"><span class="label">受付:</span> <span
               :class="selectedReservation.status === 'pending' ? 'tag-pending' : (selectedReservation.source === 'phone' ? 'tag-phone' : 'tag-web')">{{
@@ -1551,6 +1670,47 @@ const exportReservationsToExcel = async () => {
           <button v-else class="delete-confirm-btn" @click="deleteReservation(selectedReservation.id)">🗑️
             キャンセル</button>
           <button class="edit-btn" @click="openEditModal(selectedReservation)">✏️ 編集</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 顧客登録モーダル -->
+    <div v-if="showCustomerModal" class="modal-overlay" @click.self="showCustomerModal = false">
+      <div class="modal-content">
+        <div class="modal-header-row">
+          <h3>顧客を新規登録</h3>
+          <button class="close-x-btn" @click="showCustomerModal = false">×</button>
+        </div>
+        <div class="form-group">
+          <label>名前（カナ） <span style="color: #e74c3c;">*</span></label>
+          <input type="text" v-model="newCustomer.name_kana" placeholder="例: ヤマダタロウ">
+        </div>
+        <div class="form-group">
+          <label>電話番号</label>
+          <input type="tel" v-model="newCustomer.phone_number"
+            @input="(e) => newCustomer.phone_number = formatPhoneNumber((e.target as HTMLInputElement).value)"
+            placeholder="例: 090-1234-5678">
+        </div>
+        <div class="form-group">
+          <label>よく利用するメニュー</label>
+          <div class="radio-group">
+            <label><input type="radio" value="barber" v-model="newCustomer.preferred_category"> 理容</label>
+            <label><input type="radio" value="beauty" v-model="newCustomer.preferred_category"> 美容</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>顧客タイプ</label>
+          <div class="radio-group">
+            <label><input type="radio" :value="true" v-model="newCustomer.is_existing_customer"> 既存顧客</label>
+            <label><input type="radio" :value="false" v-model="newCustomer.is_existing_customer"> 新規顧客</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>顧客メモ</label>
+          <textarea v-model="newCustomer.memo" placeholder="特記事項など"></textarea>
+        </div>
+        <div class="modal-actions right-align">
+          <button class="save-btn" @click="saveCustomer">保存する</button>
         </div>
       </div>
     </div>
@@ -2040,6 +2200,106 @@ const exportReservationsToExcel = async () => {
 
 .day-cell.empty {
   visibility: hidden;
+}
+
+/* サジェスト機能 */
+.suggest-wrapper {
+  position: relative;
+}
+
+.suggestions-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.suggestion-item {
+  padding: 10px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.suggestion-item:hover {
+  background-color: #f5f5f5;
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.customer-name {
+  font-weight: 500;
+  color: #333;
+}
+
+.customer-phone {
+  font-size: 0.9em;
+  color: #666;
+}
+
+/* 顧客登録ボタン */
+.add-customer-btn {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background-color: #27ae60;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: background-color 0.2s;
+}
+
+.add-customer-btn:hover {
+  background-color: #229954;
+}
+
+/* リンクテキストボタン */
+.link-text-btn {
+  margin-left: 8px;
+  padding: 4px 8px;
+  background-color: transparent;
+  color: #3498db;
+  border: 1px solid #3498db;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all 0.2s;
+}
+
+.link-text-btn:hover {
+  background-color: #3498db;
+  color: white;
+}
+
+/* ラジオボタングループ */
+.radio-group {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: normal;
+}
+
+.radio-group input[type="radio"] {
+  cursor: pointer;
 }
 
 /* タイムライン */
