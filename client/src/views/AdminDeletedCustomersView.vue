@@ -111,7 +111,7 @@ onMounted(() => { fetchDeletedCustomers() })
     overflow: hidden;
 }
 
-/* ゴミ箱画面はヘッダー色を変えて分かりやすく */
+/* 削除済み顧客画面はヘッダー色を変えて分かりやすく */
 .trash-header {
     background: #7f8c8d;
     color: white;
