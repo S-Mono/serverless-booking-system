@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { db, auth } from '../lib/firebase'
 import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc, updateDoc, addDoc } from 'firebase/firestore'
-import { onAuthStateChanged, signOut, type Unsubscribe } from 'firebase/auth'
+import { onAuthStateChanged, signOut, updatePassword, type Unsubscribe } from 'firebase/auth'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
@@ -34,6 +34,12 @@ const preferredCategory = ref('barber')
 const isSavingProfile = ref(false)
 const isProfileOpen = ref(false) // お客様情報の開閉状態
 const isCancellingReservation = ref(false) // 予約キャンセル中フラグ
+
+// パスワード変更
+const isPasswordChangeOpen = ref(false)
+const newPassword = ref('')
+const confirmPassword = ref('')
+const isChangingPassword = ref(false)
 
 // 電話番号フォーマット（ハイフン自動補完）
 const formatPhoneNumber = (value: string) => {
@@ -443,6 +449,53 @@ const sendContactForm = async () => {
     dialog.alert('お問い合わせを送信しました。\n折り返しご連絡いたしますので、しばらくお待ちください。', '送信完了')
     contactMessage.value = ''
     isContactFormOpen.value = false
+  } catch (e) {
+    console.error('お問い合わせ送信エラー', e)
+    dialog.alert('お問い合わせ送信に失敗しました。', 'エラー')
+  } finally {
+    isSendingContact.value = false
+  }
+}
+
+// パスワード変更
+const changePassword = async () => {
+  if (!newPassword.value || newPassword.value.length < 6) {
+    dialog.alert('パスワードは6文字以上で入力してください。', '入力エラー')
+    return
+  }
+
+  if (newPassword.value !== confirmPassword.value) {
+    dialog.alert('パスワードが一致しません。', '入力エラー')
+    return
+  }
+
+  if (!currentUser.value) {
+    dialog.alert('ログインが必要です。', 'エラー')
+    return
+  }
+
+  isChangingPassword.value = true
+  try {
+    await updatePassword(currentUser.value, newPassword.value)
+    dialog.alert('パスワードを変更しました。', '変更完了')
+    newPassword.value = ''
+    confirmPassword.value = ''
+    isPasswordChangeOpen.value = false
+  } catch (e: any) {
+    console.error('パスワード変更エラー', e)
+    if (e.code === 'auth/requires-recent-login') {
+      dialog.alert(
+        'セキュリティのため、再度ログインしてからパスワードを変更してください。',
+        'エラー'
+      )
+    } else {
+      dialog.alert('パスワード変更に失敗しました。', 'エラー')
+    }
+  } finally {
+    isChangingPassword.value = false
+  }
+}
+    isContactFormOpen.value = false
   } catch (error: any) {
     // AbortErrorは無視
     if (error.name === 'AbortError') {
@@ -637,6 +690,34 @@ const deleteAccount = async () => {
 
               <button @click="saveProfile" :disabled="isSavingProfile" class="save-btn">
                 {{ isSavingProfile ? '保存中...' : '保存する' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- パスワード変更 -->
+          <div class="card password-card">
+            <div class="profile-header">
+              <h3>🔒 パスワード変更</h3>
+              <button @click="isPasswordChangeOpen = !isPasswordChangeOpen" class="toggle-btn">
+                {{ isPasswordChangeOpen ? '▲ 閉じる' : '▼ 開く' }}
+              </button>
+            </div>
+
+            <div v-show="isPasswordChangeOpen" class="password-form">
+              <div class="form-group">
+                <label>新しいパスワード<span class="required">*</span></label>
+                <input type="password" v-model="newPassword" placeholder="6文字以上" />
+              </div>
+
+              <div class="form-group">
+                <label>パスワード確認<span class="required">*</span></label>
+                <input type="password" v-model="confirmPassword" placeholder="もう一度入力" />
+              </div>
+
+              <p class="hint">※ パスワードは6文字以上で設定してください。</p>
+
+              <button @click="changePassword" :disabled="isChangingPassword" class="save-btn">
+                {{ isChangingPassword ? '変更中...' : 'パスワードを変更' }}
               </button>
             </div>
           </div>
