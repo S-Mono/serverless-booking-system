@@ -801,6 +801,11 @@ const goToCustomerDetail = () => {
   }
 }
 
+// カルテ画面へ遷移
+const goToRecords = (customerId: string) => {
+  router.push(`/admin/customers/${customerId}/records`)
+}
+
 const openEditModal = (res: Reservation) => {
   const matchedMenu = menus.value.find(m => m.title === res.menu_items[0]?.title)
   newReservation.value = {
@@ -1510,6 +1515,8 @@ const exportReservationsToExcel = async () => {
           <div class="detail-row"><span class="label">顧客名:</span> {{ selectedReservation.customer_name || '名称未設定' }}
             <button v-if="selectedReservation.customer_id" class="link-text-btn" @click="goToCustomerDetail">➡
               顧客詳細へ</button>
+            <button v-if="selectedReservation.customer_id" class="link-text-btn" @click="goToRecords(selectedReservation.customer_id)">📋
+              カルテを見る</button>
           </div>
           <div class="detail-row"><span class="label">電話:</span> {{ selectedReservation.customer_phone || 'なし' }}</div>
           <div class="detail-row"><span class="label">担当:</span> {{ getStaffName(selectedReservation.staff_id) }}</div>
