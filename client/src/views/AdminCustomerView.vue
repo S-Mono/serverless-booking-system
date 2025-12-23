@@ -270,7 +270,8 @@ onMounted(() => { fetchCustomers() })
                         </div>
                         <div class="modal-actions">
                             <button @click="saveCustomer" class="save-btn">保存する</button>
-                            <button v-if="isEditing" @click="goToRecords(editForm.id)" class="records-btn">📋 カルテを見る</button>
+                            <button v-if="isEditing" @click="goToRecords(editForm.id)" class="records-btn">📋
+                                カルテを見る</button>
                         </div>
                     </div>
                     <div v-if="isEditing" class="history-section">

@@ -1485,7 +1485,7 @@ const exportReservationsToExcel = async () => {
           <input type="tel" v-model="newReservation.customer_phone" @input="handlePhoneInput"
             :class="{ 'input-error': validationErrors.customer_phone }" placeholder="例: 090-1234-5678">
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-            }}</span>
+          }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
@@ -1515,7 +1515,8 @@ const exportReservationsToExcel = async () => {
           <div class="detail-row"><span class="label">顧客名:</span> {{ selectedReservation.customer_name || '名称未設定' }}
             <button v-if="selectedReservation.customer_id" class="link-text-btn" @click="goToCustomerDetail">➡
               顧客詳細へ</button>
-            <button v-if="selectedReservation.customer_id" class="link-text-btn" @click="goToRecords(selectedReservation.customer_id)">📋
+            <button v-if="selectedReservation.customer_id" class="link-text-btn"
+              @click="goToRecords(selectedReservation.customer_id)">📋
               カルテを見る</button>
           </div>
           <div class="detail-row"><span class="label">電話:</span> {{ selectedReservation.customer_phone || 'なし' }}</div>
