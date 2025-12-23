@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { auth, db } from '../lib/firebase'
 import { signInWithEmailAndPassword, updatePassword } from 'firebase/auth'
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore'
+import { collection, query, where, getDocs, updateDoc, doc, orderBy, limit } from 'firebase/firestore'
 import { useDialogStore } from '../stores/dialog'
 
 const router = useRouter()
@@ -30,30 +30,54 @@ onMounted(async () => {
     }
 
     try {
-        // トークンを検証
+        // トークンを検証（作成日時の降順で最新の1件のみ取得）
+        console.log('🔍 トークン検証開始:', token)
         const resetQuery = query(
             collection(db, 'password_reset_requests'),
             where('token', '==', token),
-            where('used', '==', false)
+            where('used', '==', false),
+            orderBy('created_at', 'desc'),
+            limit(1)
         )
         const resetSnapshot = await getDocs(resetQuery)
+        console.log('📊 検索結果:', {
+            empty: resetSnapshot.empty,
+            size: resetSnapshot.size,
+            docs: resetSnapshot.docs.length
+        })
 
         if (resetSnapshot.empty || !resetSnapshot.docs[0]) {
+            console.log('❌ トークンが見つからないか既に使用済み')
             message.value = 'このリンクは無効または既に使用されています'
             verifying.value = false
             return
         }
 
         const resetData = resetSnapshot.docs[0].data()
+        console.log('📄 リセットデータ:', {
+            customer_id: resetData.customer_id,
+            expires_at: resetData.expires_at?.toDate(),
+            used: resetData.used,
+            created_at: resetData.created_at?.toDate()
+        })
         const expiresAt = resetData.expires_at?.toDate()
 
         if (!expiresAt) {
+            console.log('❌ 有効期限データなし')
             message.value = 'リクエストデータが不正です'
             verifying.value = false
             return
         }
 
-        if (expiresAt < new Date()) {
+        const now = new Date()
+        console.log('⏰ 時刻確認:', {
+            now: now,
+            expiresAt: expiresAt,
+            expired: expiresAt < now
+        })
+
+        if (expiresAt < now) {
+            console.log('❌ 有効期限切れ')
             message.value = 'このリンクの有効期限が切れています'
             verifying.value = false
             return
