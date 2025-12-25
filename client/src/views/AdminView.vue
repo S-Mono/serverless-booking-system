@@ -1599,7 +1599,7 @@ const exportReservationsToExcel = async () => {
               <div v-for="customer in customerSuggestions" :key="customer.id" class="suggestion-item"
                 @click="selectCustomer(customer)">
                 <span class="customer-name">{{ customer.name }}</span>
-                <span class="customer-phone">{{ customer.phone }}</span>
+                <span class="customer-phone">{{ formatPhoneNumber(customer.phone) }}</span>
               </div>
             </div>
           </div>
