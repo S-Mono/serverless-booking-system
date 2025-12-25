@@ -54,6 +54,18 @@
     <!-- 詳細モーダル -->
     <RecordDetailModal v-if="showDetailModal && selectedRecord" :is-open="showDetailModal" :record="selectedRecord"
       :staff-list="staffList" @close="showDetailModal = false" @edit="navigateToEdit" @delete="handleDelete" />
+
+    <!-- エディタダイアログ -->
+    <RecordEditorDialog 
+      :is-open="showEditorDialog" 
+      :customer-id="customerId" 
+      :customer-name="customerName" 
+      :customer-phone="customerPhone"
+      :record-id="editingRecordId"
+      :existing-record="editingRecord"
+      @close="showEditorDialog = false" 
+      @saved="handleEditorSaved" 
+    />
   </div>
 </template>
 
@@ -65,6 +77,7 @@ import { useDialogStore } from '../stores/dialog'
 import { db, auth } from '../lib/firebase'
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore'
 import RecordDetailModal from '../components/RecordDetailModal.vue'
+import RecordEditorDialog from '../components/RecordEditorDialog.vue'
 import type { Timestamp } from 'firebase/firestore'
 
 const route = useRoute()
@@ -81,6 +94,11 @@ const staffList = ref<Array<{ id: string; name: string }>>([])
 
 const showDetailModal = ref(false)
 const selectedRecord = ref<MedicalRecord | null>(null)
+
+// エディタダイアログの状態
+const showEditorDialog = ref(false)
+const editingRecord = ref<MedicalRecord | null>(null)
+const editingRecordId = ref<string | undefined>(undefined)
 
 onMounted(async () => {
   try {
@@ -179,9 +197,11 @@ const truncateText = (text: string, maxLength: number) => {
   return text.substring(0, maxLength) + '...'
 }
 
-// カルテ作成画面へ
+// カルテ作成ダイアログを開く
 const navigateToCreate = () => {
-  router.push(`/admin/customer-records/${customerId}/edit`)
+  editingRecord.value = null
+  editingRecordId.value = undefined
+  showEditorDialog.value = true
 }
 
 // カルテ詳細を表示
@@ -190,10 +210,15 @@ const showDetail = (record: MedicalRecord) => {
   showDetailModal.value = true
 }
 
-// カルテ編集画面へ
+// カルテ編集ダイアログを開く
 const navigateToEdit = (recordId: string) => {
   showDetailModal.value = false
-  router.push(`/admin/customer-records/${customerId}/edit/${recordId}`)
+  const record = recordStore.records.find(r => r.id === recordId)
+  if (record) {
+    editingRecord.value = record
+    editingRecordId.value = recordId
+    showEditorDialog.value = true
+  }
 }
 
 // カルテ削除
@@ -209,6 +234,12 @@ const handleDelete = async (recordId: string) => {
     console.error('Failed to delete record:', error)
     dialog.alert('削除に失敗しました: ' + error.message)
   }
+}
+
+// エディタダイアログが保存された後の処理
+const handleEditorSaved = async () => {
+  // カルテ一覧を再読み込み
+  await recordStore.fetchRecordsByCustomer(customerId)
 }
 </script>
 
