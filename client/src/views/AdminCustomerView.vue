@@ -16,7 +16,7 @@ interface Customer {
     name_kana: string
     phone_number: string
     memo?: string
-    preferred_category?: 'barber' | 'beauty'
+    preferred_category?: 'barber' | 'beauty' | 'student' | 'chiro'
     // true => 既存顧客, false => 新規顧客
     is_existing_customer?: boolean
     deleted_at?: Timestamp | null
@@ -284,7 +284,7 @@ onMounted(() => { fetchCustomers() })
                                 <td class="name-cell">{{ cust.name_kana }}</td>
                                 <td>{{ formatPhoneNumber(cust.phone_number || '') }}</td>
                                 <td>{{ cust.is_existing_customer ? '既存' : '新規' }}</td>
-                                <td>{{ cust.preferred_category === 'beauty' ? '美容' : '理容' }}</td>
+                                <td>{{ cust.preferred_category === 'beauty' ? '美容' : (cust.preferred_category === 'student' ? '学生' : (cust.preferred_category === 'chiro' ? 'カイロ' : '理容')) }}</td>
                                 <td class="memo-cell">{{ cust.memo }}</td>
                                 <td class="actions-cell">
                                     <button @click="openEditModal(cust)" class="edit-btn">詳細・履歴</button>
@@ -327,6 +327,10 @@ onMounted(() => { fetchCustomers() })
                                     理容</label>
                                 <label><input type="radio" value="beauty" v-model="editForm.preferred_category">
                                     美容</label>
+                                <label><input type="radio" value="student" v-model="editForm.preferred_category">
+                                    学生（中学まで）</label>
+                                <label><input type="radio" value="chiro" v-model="editForm.preferred_category">
+                                    カイロ</label>
                             </div>
                         </div>
                         <div class="form-group">

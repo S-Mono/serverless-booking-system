@@ -1837,6 +1837,8 @@ const exportReservationsToExcel = async () => {
           <div class="radio-group">
             <label><input type="radio" value="barber" v-model="newCustomer.preferred_category"> 理容</label>
             <label><input type="radio" value="beauty" v-model="newCustomer.preferred_category"> 美容</label>
+            <label><input type="radio" value="student" v-model="newCustomer.preferred_category"> 学生（中学まで）</label>
+            <label><input type="radio" value="chiro" v-model="newCustomer.preferred_category"> カイロ</label>
           </div>
         </div>
         <div class="form-group">
