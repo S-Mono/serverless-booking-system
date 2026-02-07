@@ -75,6 +75,7 @@ const newReservation = ref({
 // 顧客サジェスト用
 const customerSuggestions = ref<Array<{ id: string, name: string, phone: string }>>([])
 const showSuggestions = ref(false)
+const showNameSuggestions = ref(false)
 
 // 顧客登録モーダル用
 const showCustomerModal = ref(false)
@@ -638,6 +639,7 @@ const formatPhoneNumber = (value: string) => {
 const handlePhoneInput = async (event: Event) => {
   const input = event.target as HTMLInputElement
   newReservation.value.customer_phone = formatPhoneNumber(input.value)
+  showNameSuggestions.value = false
 
   // 顧客サジェスト検索
   const phoneDigits = input.value.replace(/\D/g, '')
@@ -658,21 +660,60 @@ const handlePhoneInput = async (event: Event) => {
         phone: c.phone_number || ''
       }))
       showSuggestions.value = customerSuggestions.value.length > 0
+      showNameSuggestions.value = false
     } catch (e) {
       console.error('顧客検索エラー:', e)
     }
   } else {
     customerSuggestions.value = []
     showSuggestions.value = false
+    showNameSuggestions.value = false
+  }
+}
+
+const handleNameInput = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const queryText = input.value.trim().replace(/\s/g, '')
+
+  if (queryText.length < 2) {
+    customerSuggestions.value = []
+    showNameSuggestions.value = false
+    return
+  }
+
+  try {
+    const customersSnap = await getDocs(collection(db, 'customers'))
+    const matches = customersSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter((c: any) => !c.deleted_at)
+      .filter((c: any) => {
+        const nameKana = (c.name_kana || '').replace(/\s/g, '')
+        const nameKanji = (c.name_kanji || '').replace(/\s/g, '')
+        return nameKana.includes(queryText) || nameKanji.includes(queryText)
+      })
+      .slice(0, 5)
+
+    customerSuggestions.value = matches.map((c: any) => ({
+      id: c.id,
+      name: c.name_kana || '名前なし',
+      phone: c.phone_number || ''
+    }))
+    showNameSuggestions.value = customerSuggestions.value.length > 0
+    showSuggestions.value = false
+  } catch (e) {
+    console.error('顧客検索エラー:', e)
+    customerSuggestions.value = []
+    showNameSuggestions.value = false
   }
 }
 
 const selectCustomer = (customer: { id: string, name: string, phone: string }) => {
   newReservation.value.customer_id = customer.id
   newReservation.value.customer_name = customer.name
-  newReservation.value.customer_phone = customer.phone
+  newReservation.value.customer_phone = customer.phone ? formatPhoneNumber(customer.phone) : ''
   customerSuggestions.value = []
   showSuggestions.value = false
+  showNameSuggestions.value = false
 }
 
 // 顧客登録モーダルを開く
@@ -804,9 +845,9 @@ const submitReservation = async () => {
           const customersSnap = await getDocs(collection(db, 'customers'))
           const isDuplicate = customersSnap.docs.some(doc => {
             const data = doc.data()
-            return data.phone_number === phoneNumberToSave && 
-                   data.name_kana === newReservation.value.customer_name &&
-                   !data.deleted_at
+            return data.phone_number === phoneNumberToSave &&
+              data.name_kana === newReservation.value.customer_name &&
+              !data.deleted_at
           })
 
           if (!isDuplicate) {
@@ -814,9 +855,9 @@ const submitReservation = async () => {
             const phoneOnlyDuplicates = customersSnap.docs
               .map(doc => ({ id: doc.id, ...doc.data() }))
               .filter((c: any) => {
-                return c.phone_number === phoneNumberToSave && 
-                       c.name_kana !== newReservation.value.customer_name &&
-                       !c.deleted_at
+                return c.phone_number === phoneNumberToSave &&
+                  c.name_kana !== newReservation.value.customer_name &&
+                  !c.deleted_at
               })
 
             // ダイアログメッセージを構築
@@ -1708,7 +1749,8 @@ const exportReservationsToExcel = async () => {
         </div>
         <div class="form-group">
           <label>メニュー <span style="color: #e74c3c;">*</span></label>
-          <select @change="(e) => { const target = e.target as HTMLSelectElement; if (target.value) { addMenu(target.value); target.value = '' } }"
+          <select
+            @change="(e) => { const target = e.target as HTMLSelectElement; if (target.value) { addMenu(target.value); target.value = '' } }"
             :class="{ 'input-error': validationErrors.menus }">
             <option value="">メニューを追加...</option>
             <option v-for="m in menus" :key="m.id" :value="m.id">{{ m.title }} ({{ m.duration_min }}分)</option>
@@ -1726,8 +1768,17 @@ const exportReservationsToExcel = async () => {
         </div>
         <div class="form-group">
           <label>顧客名 <span style="color: #e74c3c;">*</span></label>
-          <input type="text" v-model="newReservation.customer_name"
-            :class="{ 'input-error': validationErrors.customer_name }" placeholder="例: 山田様">
+          <div class="suggest-wrapper">
+            <input type="text" v-model="newReservation.customer_name" @input="handleNameInput"
+              :class="{ 'input-error': validationErrors.customer_name }" placeholder="例: 山田様">
+            <div v-if="showNameSuggestions" class="suggestions-dropdown">
+              <div v-for="customer in customerSuggestions" :key="customer.id" class="suggestion-item"
+                @click="selectCustomer(customer)">
+                <span class="customer-name">{{ customer.name }}</span>
+                <span class="customer-phone">{{ formatPhoneNumber(customer.phone) }}</span>
+              </div>
+            </div>
+          </div>
           <span v-if="validationErrors.customer_name" class="error-message">{{ validationErrors.customer_name }}</span>
           <button class="add-customer-btn" @click="openCustomerModal">➕ 顧客を新規登録</button>
         </div>
@@ -1745,7 +1796,7 @@ const exportReservationsToExcel = async () => {
             </div>
           </div>
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-            }}</span>
+          }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
