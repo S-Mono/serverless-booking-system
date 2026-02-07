@@ -69,13 +69,14 @@ const isEditing = ref(false)
 const editingId = ref<string | null>(null)
 
 const newReservation = ref({
-  staff_id: '', start_time: '', end_time: '', customer_name: '', customer_phone: '', customer_id: '', selectedMenuIds: [] as string[], note: ''
+  staff_id: '', start_time: '', end_time: '', customer_name: '', customer_phone: '', customer_id: '', record_number: '', selectedMenuIds: [] as string[], note: ''
 })
 
 // 顧客サジェスト用
-const customerSuggestions = ref<Array<{ id: string, name: string, phone: string }>>([])
+const customerSuggestions = ref<Array<{ id: string, name: string, phone: string, record_number?: string }>>([])
 const showSuggestions = ref(false)
 const showNameSuggestions = ref(false)
+const showRecordSuggestions = ref(false)
 
 // 顧客登録モーダル用
 const showCustomerModal = ref(false)
@@ -640,6 +641,7 @@ const handlePhoneInput = async (event: Event) => {
   const input = event.target as HTMLInputElement
   newReservation.value.customer_phone = formatPhoneNumber(input.value)
   showNameSuggestions.value = false
+  showRecordSuggestions.value = false
 
   // 顧客サジェスト検索
   const phoneDigits = input.value.replace(/\D/g, '')
@@ -657,7 +659,8 @@ const handlePhoneInput = async (event: Event) => {
       customerSuggestions.value = matches.map((c: any) => ({
         id: c.id,
         name: c.name_kana || '名前なし',
-        phone: c.phone_number || ''
+        phone: c.phone_number || '',
+        record_number: c.record_number || ''
       }))
       showSuggestions.value = customerSuggestions.value.length > 0
       showNameSuggestions.value = false
@@ -696,10 +699,12 @@ const handleNameInput = async (event: Event) => {
     customerSuggestions.value = matches.map((c: any) => ({
       id: c.id,
       name: c.name_kana || '名前なし',
-      phone: c.phone_number || ''
+      phone: c.phone_number || '',
+      record_number: c.record_number || ''
     }))
     showNameSuggestions.value = customerSuggestions.value.length > 0
     showSuggestions.value = false
+    showRecordSuggestions.value = false
   } catch (e) {
     console.error('顧客検索エラー:', e)
     customerSuggestions.value = []
@@ -707,13 +712,52 @@ const handleNameInput = async (event: Event) => {
   }
 }
 
-const selectCustomer = (customer: { id: string, name: string, phone: string }) => {
+const handleRecordNumberInput = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const queryText = input.value.trim()
+
+  if (queryText.length < 1) {
+    customerSuggestions.value = []
+    showRecordSuggestions.value = false
+    return
+  }
+
+  try {
+    const customersSnap = await getDocs(collection(db, 'customers'))
+    const matches = customersSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter((c: any) => !c.deleted_at)
+      .filter((c: any) => {
+        const recordNumber = c.record_number || ''
+        return recordNumber.includes(queryText)
+      })
+      .slice(0, 5)
+
+    customerSuggestions.value = matches.map((c: any) => ({
+      id: c.id,
+      name: c.name_kana || '名前なし',
+      phone: c.phone_number || '',
+      record_number: c.record_number || ''
+    }))
+    showRecordSuggestions.value = customerSuggestions.value.length > 0
+    showSuggestions.value = false
+    showNameSuggestions.value = false
+  } catch (e) {
+    console.error('顧客検索エラー:', e)
+    customerSuggestions.value = []
+    showRecordSuggestions.value = false
+  }
+}
+
+const selectCustomer = (customer: { id: string, name: string, phone: string, record_number?: string }) => {
   newReservation.value.customer_id = customer.id
   newReservation.value.customer_name = customer.name
   newReservation.value.customer_phone = customer.phone ? formatPhoneNumber(customer.phone) : ''
+  newReservation.value.record_number = customer.record_number || ''
   customerSuggestions.value = []
   showSuggestions.value = false
   showNameSuggestions.value = false
+  showRecordSuggestions.value = false
 }
 
 // 顧客登録モーダルを開く
@@ -1073,11 +1117,24 @@ const goToRecords = (customerId: string) => {
   router.push(`/admin/customers/${customerId}/records`)
 }
 
-const openEditModal = (res: Reservation) => {
+const openEditModal = async (res: Reservation) => {
   // 既存のメニューをマッチング
   const matchedMenuIds = res.menu_items
     .map(item => menus.value.find(m => m.title === item.title)?.id)
     .filter((id): id is string => id !== undefined)
+
+  // カルテ番号を取得（customer_idがある場合）
+  let recordNumber = ''
+  if (res.customer_id) {
+    try {
+      const customerDoc = await getDoc(doc(db, 'customers', res.customer_id))
+      if (customerDoc.exists()) {
+        recordNumber = customerDoc.data().record_number || ''
+      }
+    } catch (e) {
+      console.error('カルテ番号取得エラー:', e)
+    }
+  }
 
   newReservation.value = {
     staff_id: res.staff_id,
@@ -1086,6 +1143,7 @@ const openEditModal = (res: Reservation) => {
     customer_name: res.customer_name || '',
     customer_phone: formatPhoneNumber(res.customer_phone || ''),
     customer_id: res.customer_id || '',
+    record_number: recordNumber,
     selectedMenuIds: matchedMenuIds,
     note: res.note || ''
   }
@@ -1134,7 +1192,7 @@ const onMouseUp = () => {
     staff_id: dragStaffId.value,
     start_time: toLocalISOString(dragStartTime.value),
     end_time: '',
-    customer_name: '', customer_phone: '', customer_id: '', selectedMenuIds: [], note: ''
+    customer_name: '', customer_phone: '', customer_id: '', record_number: '', selectedMenuIds: [], note: ''
   }
   showModal.value = true; isDragging.value = false; dragStaffId.value = null
 }
@@ -1767,6 +1825,20 @@ const exportReservationsToExcel = async () => {
           <span v-if="validationErrors.menus" class="error-message">{{ validationErrors.menus }}</span>
         </div>
         <div class="form-group">
+          <label>カルテ番号</label>
+          <div class="suggest-wrapper">
+            <input type="text" v-model="newReservation.record_number" @input="handleRecordNumberInput"
+              placeholder="例: K-000123">
+            <div v-if="showRecordSuggestions" class="suggestions-dropdown">
+              <div v-for="customer in customerSuggestions" :key="customer.id" class="suggestion-item"
+                @click="selectCustomer(customer)">
+                <span class="customer-name">{{ customer.record_number }} - {{ customer.name }}</span>
+                <span class="customer-phone">{{ formatPhoneNumber(customer.phone) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
           <label>顧客名 <span style="color: #e74c3c;">*</span></label>
           <div class="suggest-wrapper">
             <input type="text" v-model="newReservation.customer_name" @input="handleNameInput"
@@ -1796,7 +1868,7 @@ const exportReservationsToExcel = async () => {
             </div>
           </div>
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-          }}</span>
+            }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
