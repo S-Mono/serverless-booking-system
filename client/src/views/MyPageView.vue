@@ -1,45 +1,45 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { db, auth } from '../lib/firebase'
-import { collection, query, where, getDocs, deleteDoc, doc, setDoc, Timestamp, orderBy, getDoc, updateDoc, addDoc } from 'firebase/firestore'
-import { onAuthStateChanged, signOut, updatePassword, type Unsubscribe } from 'firebase/auth'
+import { auth } from '../lib/firebase'
+import { Timestamp } from 'firebase/firestore'
+import { onAuthStateChanged, signOut, type Unsubscribe, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useDialogStore } from '../stores/dialog'
 import { useUserStore } from '../stores/user'
-import { useLineAuthStore } from '../stores/lineAuth'
 import { useRouter } from 'vue-router'
-import liff from '@line/liff'
-import VConsole from 'vconsole'
+import { useCustomer, useReservation, useContact } from '../composables'
 
 const dialog = useDialogStore()
 const userStore = useUserStore()
 const router = useRouter()
 const functions = getFunctions(undefined, 'asia-northeast1')
 
-interface Reservation {
-  id: string
-  start_at: Timestamp
-  menu_items: { title: string; price: number }[]
-  status: 'pending' | 'confirmed' | 'cancelled'
-  cancelled_at?: Timestamp
-}
+// Composablesの初期化
+const { customerData, isLoading: isLoadingCustomer, isSaving: isSavingProfile, fetchCustomer, saveCustomer } = useCustomer({
+  onError: (error) => dialog.alert(error.message || 'エラーが発生しました', 'エラー')
+})
 
-const reservations = ref<Reservation[]>([])
+const { reservations, isLoading: isLoadingReservations, isOperating: isCancellingReservation, fetchUserReservations, cancelReservation: cancelReservationComposable } = useReservation({
+  onError: (error) => dialog.alert(error.message || 'エラーが発生しました', 'エラー')
+})
+
+const { isSending: isSendingContact, sendContact } = useContact({
+  onError: (error) => dialog.alert(error.message || 'エラーが発生しました', 'エラー')
+})
+
 const loading = ref(true)
 const currentUser = ref<any>(null)
 const nameKanji = ref('') // 姓名（漢字）
 const nameKana = ref('') // 読み仮名（カナ）
 const phoneNumber = ref('') // 電話番号
 const preferredCategory = ref('barber')
-const isSavingProfile = ref(false)
 const isProfileOpen = ref(false) // お客様情報の開閉状態
-const isCancellingReservation = ref(false) // 予約キャンセル中フラグ
-
-// パスワード変更
-const isPasswordChangeOpen = ref(false)
-const newPassword = ref('')
-const confirmPassword = ref('')
-const isChangingPassword = ref(false)
+const isLineUser = ref(false) // LINEログインユーザーかどうか
+const showPasswordChangeDialog = ref(false) // パスワード変更ダイアログ表示フラグ
+const currentPassword = ref('') // 現在のパスワード
+const newPassword = ref('') // 新しいパスワード
+const confirmPassword = ref('') // 新しいパスワード（確認）
+const isChangingPassword = ref(false) // パスワード変更中フラグ
 
 // 電話番号フォーマット（ハイフン自動補完）
 const formatPhoneNumber = (value: string) => {
@@ -96,82 +96,35 @@ const handlePhoneInput = (event: Event) => {
 // お問い合わせフォーム
 const isContactFormOpen = ref(false)
 const contactMessage = ref('')
-const isSendingContact = ref(false)
 
-const fetchReservations = async (userId: string) => {
+// ユーザーデータをロード
+const loadUserData = async (userId: string) => {
   loading.value = true
-  console.log('[MyPage] fetchReservations called with userId:', userId)
   try {
-    // 本日00:00以降の予約のみ取得
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    console.log('[MyPage] Fetching reservations from:', today)
+    // 予約と顧客データを並行で取得
+    const [reservationData, customerDataResult] = await Promise.all([
+      fetchUserReservations(userId),
+      fetchCustomer(userId)
+    ])
 
-    const q = query(
-      collection(db, 'reservations'),
-      where('customer_id', '==', userId),
-      where('start_at', '>=', Timestamp.fromDate(today))
-    )
-    const querySnapshot = await getDocs(q)
-    console.log('[MyPage] Query result size:', querySnapshot.size)
-    const results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Reservation[]
-    // JavaScript側でソート & キャンセル済みを除外
-    reservations.value = results
-      .filter(res => res.status !== 'cancelled') // キャンセル済みは除外
-      .sort((a, b) => a.start_at.seconds - b.start_at.seconds)
-    console.log('[MyPage] Reservations loaded:', reservations.value.length)
-
-    // プロフィール取得 (UID優先)
-    const docRef = doc(db, 'customers', userId)
-    const docSnap = await getDoc(docRef)
-
-    if (docSnap.exists()) {
-      const data = docSnap.data()
-      console.log('[MyPage] Customer data loaded:', {
-        name_kanji: data.name_kanji,
-        name_kana: data.name_kana,
-        phone_number: data.phone_number,
-        provider: data.provider
-      })
-      nameKanji.value = data.name_kanji || ''
-      nameKana.value = data.name_kana || ''
-      phoneNumber.value = data.phone_number ? formatPhoneNumber(data.phone_number) : ''
-      console.log('[MyPage] Phone number formatted:', phoneNumber.value)
-      preferredCategory.value = data.preferred_category || 'barber'
+    // 顧客データをローカル状態に反映
+    if (customerDataResult) {
+      nameKanji.value = customerDataResult.name_kanji || ''
+      nameKana.value = customerDataResult.name_kana || ''
+      phoneNumber.value = customerDataResult.phone_number ? formatPhoneNumber(customerDataResult.phone_number) : ''
+      preferredCategory.value = customerDataResult.preferred_category || 'barber'
+      isLineUser.value = customerDataResult.provider === 'line'
       // 未入力なら開く、入力済みなら閉じる
       isProfileOpen.value = !nameKana.value || !phoneNumber.value
     } else {
-      console.log('[MyPage] No customer document found for UID, trying phone lookup')
-      // なければ電話番号で名寄せトライ
-      const phone = currentUser.value.email?.split('@')[0]
-      console.log('[MyPage] Phone from email:', phone)
-      if (phone) {
-        const custQ = query(collection(db, 'customers'), where('phone_number', '==', phone))
-        const custSnap = await getDocs(custQ)
-        console.log('[MyPage] Phone lookup result:', custSnap.size, 'documents')
-        if (!custSnap.empty) {
-          const data = custSnap.docs[0]!.data()
-          console.log('[MyPage] Customer data from phone lookup:', data)
-          nameKanji.value = data.name_kanji || ''
-          nameKana.value = data.name_kana || ''
-          phoneNumber.value = data.phone_number ? formatPhoneNumber(data.phone_number) : ''
-          preferredCategory.value = data.preferred_category || 'barber'
-          // 未入力なら開く、入力済みなら閉じる
-          isProfileOpen.value = !nameKana.value || !phoneNumber.value
-        }
-      }
+      isProfileOpen.value = true
     }
   } catch (error: any) {
-    // AbortErrorはユーザーが画面を離れたことによる正常な中断
-    if (error.name === 'AbortError') {
-      console.log('[MyPage] Fetch aborted (user navigated away)')
-      return
+    if (error.name !== 'AbortError') {
+      dialog.alert('データの取得に失敗しました。ページを更新してください。', 'エラー')
     }
-    console.error('[MyPage] Error fetching reservations:', error)
-    dialog.alert('予約情報の取得に失敗しました。ページを更新してください。', 'エラー')
   } finally {
     loading.value = false
-    console.log('[MyPage] Loading complete')
   }
 }
 
@@ -212,197 +165,42 @@ const saveProfile = async () => {
     return
   }
 
-  isSavingProfile.value = true
-  try {
-    // 電話番号からハイフンを除去して保存
-    const phoneNumberToSave = phoneNumber.value.replace(/[^0-9]/g, '')
+  // 電話番号からハイフンを除去して保存
+  const cleanPhoneNumber = phoneNumber.value.replace(/[^0-9]/g, '')
 
-    await setDoc(doc(db, 'customers', currentUser.value.uid), {
-      name_kanji: nameKanji.value,
-      name_kana: nameKana.value,
-      phone_number: phoneNumberToSave,
-      preferred_category: preferredCategory.value,
-      is_existing_customer: true,
-      updated_at: Timestamp.now()
-    }, { merge: true })
+  const success = await saveCustomer(currentUser.value.uid, {
+    name_kanji: nameKanji.value,
+    name_kana: nameKana.value,
+    phone_number: cleanPhoneNumber,
+    preferred_category: preferredCategory.value,
+    is_existing_customer: true
+  })
 
+  if (success) {
     // 🔴 ヘッダーの名前を即座に更新（漢字優先、なければカナ）
     userStore.setCustomerName(nameKanji.value || nameKana.value)
-
     dialog.alert('プロフィールを保存しました')
-  } catch (error) { console.error(error); dialog.alert('保存失敗', 'エラー') } finally { isSavingProfile.value = false }
+  } else {
+    dialog.alert('保存失敗', 'エラー')
+  }
 }
 
 const cancelReservation = async (id: string) => {
   const ok = await dialog.open('キャンセルしますか？', { title: '確認', type: 'normal', cancelText: 'いいえ', confirmText: 'はい' })
   if (!ok) return
 
-  isCancellingReservation.value = true
-  console.log('[MyPage] Cancelling reservation:', id)
-  console.log('[MyPage] Current user UID:', currentUser.value?.uid)
-
-  try {
-    // 予約データを取得して確認
-    const resDoc = await getDoc(doc(db, 'reservations', id))
-    if (!resDoc.exists()) {
-      throw new Error('予約が見つかりません')
-    }
-
-    const resData = resDoc.data()
-    console.log('[MyPage] Reservation data:', resData)
-    console.log('[MyPage] Reservation customer_id:', resData.customer_id)
-
-    // 1. 予約を論理削除（status='cancelled'に変更）
-    await updateDoc(doc(db, 'reservations', id), {
-      status: 'cancelled',
-      cancelled_at: Timestamp.now()
-    })
-    console.log('[MyPage] Reservation status set to cancelled')
-
-    // 🟢 2. 【追加】関連するメッセージを「キャンセル扱い」に更新
-    // エラーが発生しても予約キャンセル自体は成功とする（非クリティカル処理）
-    console.log('[MyPage] === メッセージ更新処理開始 ===')
-    console.log('[MyPage] 検索する reservation_id:', id)
-    console.log('[MyPage] 検索する customer_id:', currentUser.value?.uid)
-
-    try {
-      console.log('[MyPage] クエリ作成中...')
-      const msgQ = query(
-        collection(db, 'messages'),
-        where('customer_id', '==', currentUser.value?.uid),  // 権限チェックのため必須
-        where('reservation_id', '==', id)
-      )
-      console.log('[MyPage] クエリ作成完了')
-
-      console.log('[MyPage] getDocs実行中...')
-      const msgSnap = await getDocs(msgQ)
-      console.log('[MyPage] getDocs完了 - 件数:', msgSnap.size)
-
-      if (msgSnap.size > 0) {
-        console.log('[MyPage] メッセージが見つかりました:', msgSnap.size, '件')
-        console.log('[MyPage] 現在のユーザーUID:', currentUser.value?.uid)
-
-        // 関連するメッセージがあれば全て更新
-        for (const d of msgSnap.docs) {
-          const msgData = d.data()
-          console.log('[MyPage] メッセージ詳細:', {
-            id: d.id,
-            title: msgData.title,
-            customer_id: msgData.customer_id,
-            reservation_id: msgData.reservation_id,
-            is_cancelled: msgData.is_cancelled
-          })
-
-          console.log('[MyPage] 権限チェック:', {
-            メッセージのcustomer_id: msgData.customer_id,
-            現在のユーザーUID: currentUser.value?.uid,
-            一致: msgData.customer_id === currentUser.value?.uid
-          })
-
-          const currentTitle = msgData.title
-          const newTitle = currentTitle.startsWith('【キャンセル済】')
-            ? currentTitle
-            : '【キャンセル済】' + currentTitle
-
-          console.log('[MyPage] 更新内容:', {
-            旧タイトル: currentTitle,
-            新タイトル: newTitle,
-            is_cancelled: true
-          })
-
-          try {
-            console.log('[MyPage] updateDoc実行中... ドキュメントID:', d.id)
-            await updateDoc(d.ref, {
-              is_cancelled: true,
-              title: newTitle
-            })
-            console.log('[MyPage] ✅ メッセージ更新成功:', d.id)
-          } catch (err: any) {
-            console.error('[MyPage] ❌ メッセージ更新失敗:', d.id)
-            console.error('[MyPage] エラー詳細:', {
-              code: err.code,
-              message: err.message,
-              stack: err.stack
-            })
-
-            // Firestoreにエラーログを記録
-            await addDoc(collection(db, 'error_logs'), {
-              context: 'MyPage_CancelReservation_MessageUpdate',
-              message: err.message || String(err),
-              error_code: err.code || 'unknown',
-              message_id: d.id,
-              reservation_id: id,
-              user_id: currentUser.value?.uid,
-              timestamp: Timestamp.now(),
-              userAgent: navigator.userAgent
-            }).catch(e => console.error('Failed to log error:', e))
-          }
-        }
-        console.log('[MyPage] === メッセージ処理完了 ===')
-      } else {
-        console.warn('[MyPage] ⚠️ メッセージが見つかりませんでした')
-        console.log('[MyPage] 検索条件:', { reservation_id: id })
-        console.log('[MyPage] 予約データ:', resData)
-
-        // メッセージが見つからなかったことをログ
-        await addDoc(collection(db, 'error_logs'), {
-          context: 'MyPage_CancelReservation_NoMessages',
-          message: 'No messages found for reservation',
-          reservation_id: id,
-          customer_id: resData.customer_id,
-          user_id: currentUser.value?.uid,
-          timestamp: Timestamp.now()
-        }).catch(e => console.error('Failed to log:', e))
-      }
-    } catch (msgError: any) {
-      console.error('[MyPage] ❌ メッセージクエリ失敗')
-      console.error('[MyPage] エラータイプ:', msgError.name)
-      console.error('[MyPage] エラーコード:', msgError.code)
-      console.error('[MyPage] エラーメッセージ:', msgError.message)
-      console.error('[MyPage] エラー全体:', msgError)
-
-      // Firestoreインデックスエラーの場合は特別に処理
-      if (msgError.code === 'failed-precondition' || msgError.message?.includes('index')) {
-        console.error('[MyPage] 🔥 Firestoreインデックスエラーの可能性があります')
-        console.error('[MyPage] Firebaseコンソールでインデックスを作成してください')
-      }
-
-      await addDoc(collection(db, 'error_logs'), {
-        context: 'MyPage_CancelReservation_QueryFailed',
-        message: msgError.message || String(msgError),
-        error_code: msgError.code || 'unknown',
-        error_name: msgError.name || 'unknown',
-        reservation_id: id,
-        user_id: currentUser.value?.uid,
-        timestamp: Timestamp.now(),
-        full_error: JSON.stringify(msgError, Object.getOwnPropertyNames(msgError))
-      }).catch(e => console.error('Failed to log error:', e))
-    }
-
+  const success = await cancelReservationComposable(id)
+  if (success) {
     dialog.alert('予約をキャンセルしました')
-    reservations.value = reservations.value.filter(res => res.id !== id)
-  } catch (error: any) {
-    // AbortErrorはユーザーが画面を離れたことによる正常な中断なので無視
-    if (error.name === 'AbortError') {
-      console.log('[MyPage] Request aborted (user navigated away)')
-      return
-    }
-
-    console.error('[MyPage] Cancel error:', error)
-    const errorMsg = error?.message || error?.code || '不明なエラー'
-    dialog.alert(`キャンセル失敗: ${errorMsg}`, 'エラー')
-  } finally {
-    isCancellingReservation.value = false
+  } else {
+    const errorMsg = '予約のキャンセルに失敗しました'
+    dialog.alert(`${errorMsg}`, 'エラー')
   }
 }
 
 // 戻る
 const goBack = () => {
-  // ルーターを使ってもいいが、import省略のためhistory.back()でも可
-  // 今回はrouterを使う
-  import('vue-router').then(({ useRouter }) => {
-    useRouter().push('/')
-  })
+  router.push('/')
 }
 
 // お問い合わせ送信
@@ -417,115 +215,34 @@ const sendContactForm = async () => {
     return
   }
 
-  isSendingContact.value = true
-  try {
-    // お客様情報を取得
-    const customerDocRef = doc(db, 'customers', currentUser.value.uid)
-    const customerSnap = await getDoc(customerDocRef)
-    const customerData = customerSnap.exists() ? customerSnap.data() : {}
+  const success = await sendContact(currentUser.value.uid, contactMessage.value, {
+    name_kanji: nameKanji.value,
+    name_kana: nameKana.value,
+    phone_number: phoneNumber.value,
+    email: currentUser.value.email
+  })
 
-    // お問い合わせ内容をFirestoreに保存
-    const contactRef = doc(collection(db, 'contacts'))
-    await setDoc(contactRef, {
-      customer_id: currentUser.value.uid,
-      customer_name: customerData.name_kanji || customerData.name_kana || 'ゲスト',
-      customer_email: currentUser.value.email || '',
-      customer_phone: customerData.phone_number || phoneNumber.value || '',
-      message: contactMessage.value,
-      created_at: Timestamp.now(),
-      status: 'pending'
-    })
-
-    // メッセージコレクションにも通知を追加（お客様が確認できるように）
-    const messageRef = doc(collection(db, 'messages'))
-    await setDoc(messageRef, {
-      customer_id: currentUser.value.uid,
-      title: 'お問い合わせを受け付けました',
-      body: `お問い合わせ内容:\n${contactMessage.value}\n\n折り返しご連絡いたしますので、しばらくお待ちください。`,
-      is_read: false,
-      created_at: Timestamp.now()
-    })
-
+  if (success) {
     dialog.alert('お問い合わせを送信しました。\n折り返しご連絡いたしますので、しばらくお待ちください。', '送信完了')
     contactMessage.value = ''
     isContactFormOpen.value = false
-  } catch (e) {
-    console.error('お問い合わせ送信エラー', e)
-    dialog.alert('お問い合わせ送信に失敗しました。', 'エラー')
-  } finally {
-    isSendingContact.value = false
-  }
-}
-
-// パスワード変更
-const changePassword = async () => {
-  if (!newPassword.value || newPassword.value.length < 6) {
-    dialog.alert('パスワードは6文字以上で入力してください。', '入力エラー')
-    return
-  }
-
-  if (newPassword.value !== confirmPassword.value) {
-    dialog.alert('パスワードが一致しません。', '入力エラー')
-    return
-  }
-
-  if (!currentUser.value) {
-    dialog.alert('ログインが必要です。', 'エラー')
-    return
-  }
-
-  isChangingPassword.value = true
-  try {
-    await updatePassword(currentUser.value, newPassword.value)
-    dialog.alert('パスワードを変更しました。', '変更完了')
-    newPassword.value = ''
-    confirmPassword.value = ''
-    isPasswordChangeOpen.value = false
-  } catch (e: any) {
-    console.error('パスワード変更エラー', e)
-    if (e.code === 'auth/requires-recent-login') {
-      dialog.alert(
-        'セキュリティのため、再度ログインしてからパスワードを変更してください。',
-        'エラー'
-      )
-    } else {
-      dialog.alert('パスワード変更に失敗しました。', 'エラー')
-    }
-  } finally {
-    isChangingPassword.value = false
+  } else {
+    dialog.alert('お問い合わせの送信に失敗しました。\n時間をおいて再度お試しください。', 'エラー')
   }
 }
 
 // 🟢 Authリスナーのクリーンアップ用
 let unsubscribeAuth: Unsubscribe | null = null
-let vConsoleInstance: VConsole | null = null
 
 onMounted(() => {
-  // vConsoleを初期化（開発時のデバッグ用）
-  // vConsoleInstance = new VConsole({
-  //   theme: 'dark',
-  //   maxLogNumber: 1000,
-  //   onReady: () => {
-  //     console.log('[vConsole] Ready')
-  //   }
-  // })
-  // console.log('[MyPage] vConsole initialized')
-
   unsubscribeAuth = onAuthStateChanged(auth, (user) => {
     currentUser.value = user
-    if (user) fetchReservations(user.uid)
+    if (user) loadUserData(user.uid)
     else loading.value = false
   })
 })
 
 onUnmounted(() => {
-  // vConsoleをクリーンアップ
-  if (vConsoleInstance) {
-    vConsoleInstance.destroy()
-    vConsoleInstance = null
-    console.log('[MyPage] vConsole destroyed')
-  }
-
   // リスナーを解除してメモリリークとAbortErrorを防ぐ
   if (unsubscribeAuth) {
     unsubscribeAuth()
@@ -561,41 +278,14 @@ const deleteAccount = async () => {
   isDeletingAccount.value = true
 
   try {
-    // LINEアクセストークンを取得（LINEミニアプリの場合）
-    let lineAccessToken: string | null | undefined
-    console.log('=== Withdraw Process Started ===')
-    console.log('liff.isInClient():', liff.isInClient())
-    console.log('liff.isLoggedIn():', liff.isLoggedIn())
-
-    if (liff.isInClient() && liff.isLoggedIn()) {
-      try {
-        lineAccessToken = liff.getAccessToken()
-        console.log('LINE access token obtained:', lineAccessToken ? `${lineAccessToken.substring(0, 20)}...` : 'null')
-        console.log('Token length:', lineAccessToken?.length)
-      } catch (error) {
-        console.error('Failed to get LINE access token:', error)
-      }
-    } else {
-      console.log('Not in LINE client or not logged in, skipping LINE deauthorization')
-    }
-
     // Cloud Functionを呼び出し
-    console.log('Calling deleteUserAccount function...')
     const deleteUserAccount = httpsCallable(functions, 'deleteUserAccount')
-    await deleteUserAccount({ lineAccessToken })
-    console.log('deleteUserAccount completed successfully')
+    await deleteUserAccount()
 
     await dialog.alert('退会処理が完了しました。\nご利用ありがとうございました。', '退会完了')
 
     // ログアウトフラグを設定（5秒間自動ログインをスキップ）
     localStorage.setItem('logout_flag', Date.now().toString())
-
-    // LIFFログアウト（アクセストークンをクリア）
-    const lineAuthStore = useLineAuthStore()
-    if (lineAuthStore.isLineApp) {
-      console.log('Logging out from LIFF...')
-      lineAuthStore.logout()
-    }
 
     // ログアウトしてログイン画面へ
     await signOut(auth)
@@ -611,6 +301,81 @@ const deleteAccount = async () => {
     dialog.alert(`退会処理に失敗しました。\n${errorMessage}\n\n時間をおいて再度お試しいただくか、カスタマーサポートまでお問い合わせください。`, 'エラー')
   } finally {
     isDeletingAccount.value = false
+  }
+}
+
+// パスワード変更ダイアログを開く
+const openPasswordChangeDialog = () => {
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  showPasswordChangeDialog.value = true
+}
+
+// パスワードを変更
+const changePassword = async () => {
+  // バリデーション
+  if (!currentPassword.value) {
+    dialog.alert('現在のパスワードを入力してください', '入力エラー')
+    return
+  }
+
+  if (!newPassword.value) {
+    dialog.alert('新しいパスワードを入力してください', '入力エラー')
+    return
+  }
+
+  if (newPassword.value.length < 6) {
+    dialog.alert('新しいパスワードは6文字以上で入力してください', '入力エラー')
+    return
+  }
+
+  if (newPassword.value !== confirmPassword.value) {
+    dialog.alert('新しいパスワードが一致しません', '入力エラー')
+    return
+  }
+
+  if (currentPassword.value === newPassword.value) {
+    dialog.alert('新しいパスワードは現在のパスワードと異なるものを設定してください', '入力エラー')
+    return
+  }
+
+  isChangingPassword.value = true
+
+  try {
+    const user = auth.currentUser
+    if (!user || !user.email) {
+      throw new Error('ユーザー情報が取得できません')
+    }
+
+    // 現在のパスワードで再認証
+    const credential = EmailAuthProvider.credential(user.email, currentPassword.value)
+    await reauthenticateWithCredential(user, credential)
+
+    // パスワードを更新
+    await updatePassword(user, newPassword.value)
+
+    console.log('✅ パスワード変更成功')
+
+    showPasswordChangeDialog.value = false
+    await dialog.alert(
+      'パスワードを変更しました。',
+      '変更完了'
+    )
+
+    // フォームをクリア
+    currentPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+  } catch (error: any) {
+    console.error('パスワード変更エラー:', error)
+    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      dialog.alert('現在のパスワードが正しくありません', 'エラー')
+    } else {
+      dialog.alert(`エラーが発生しました: ${error.message}`, 'エラー')
+    }
+  } finally {
+    isChangingPassword.value = false
   }
 }
 
@@ -676,33 +441,10 @@ const deleteAccount = async () => {
               <button @click="saveProfile" :disabled="isSavingProfile" class="save-btn">
                 {{ isSavingProfile ? '保存中...' : '保存する' }}
               </button>
-            </div>
-          </div>
 
-          <!-- パスワード変更 -->
-          <div class="card password-card">
-            <div class="profile-header">
-              <h3>🔒 パスワード変更</h3>
-              <button @click="isPasswordChangeOpen = !isPasswordChangeOpen" class="toggle-btn">
-                {{ isPasswordChangeOpen ? '▲ 閉じる' : '▼ 開く' }}
-              </button>
-            </div>
-
-            <div v-show="isPasswordChangeOpen" class="password-form">
-              <div class="form-group">
-                <label>新しいパスワード<span class="required">*</span></label>
-                <input type="password" v-model="newPassword" placeholder="6文字以上" />
-              </div>
-
-              <div class="form-group">
-                <label>パスワード確認<span class="required">*</span></label>
-                <input type="password" v-model="confirmPassword" placeholder="もう一度入力" />
-              </div>
-
-              <p class="hint">※ パスワードは6文字以上で設定してください。</p>
-
-              <button @click="changePassword" :disabled="isChangingPassword" class="save-btn">
-                {{ isChangingPassword ? '変更中...' : 'パスワードを変更' }}
+              <!-- パスワード変更ボタン（LINEユーザー以外） -->
+              <button v-if="!isLineUser" @click="openPasswordChangeDialog" class="password-reset-btn">
+                🔐 パスワードを変更
               </button>
             </div>
           </div>
@@ -743,7 +485,6 @@ const deleteAccount = async () => {
                 <div class="reservation-actions">
                   <button v-if="reservation.status === 'confirmed' || reservation.status === 'pending'"
                     @click="cancelReservation(reservation.id)" class="cancel-btn" :disabled="isCancellingReservation">
-                    <span v-if="isCancellingReservation" class="spinner spinner-danger"></span>
                     {{ isCancellingReservation ? '処理中...' : 'キャンセル' }}
                   </button>
                 </div>
@@ -804,7 +545,6 @@ const deleteAccount = async () => {
                 <li><strong>この操作は取り消せません</strong></li>
               </ul>
               <button @click="deleteAccount" class="delete-account-btn" :disabled="isDeletingAccount">
-                <span v-if="isDeletingAccount" class="spinner"></span>
                 {{ isDeletingAccount ? '処理中...' : '退会する' }}
               </button>
             </div>
@@ -812,6 +552,47 @@ const deleteAccount = async () => {
         </aside>
       </div>
     </div>
+
+    <!-- パスワード変更ダイアログ -->
+    <Teleport to="body">
+      <div v-if="showPasswordChangeDialog" class="modal-overlay" @click.self="showPasswordChangeDialog = false">
+        <div class="modal-content password-change-modal">
+          <div class="modal-header">
+            <h3>パスワードの変更</h3>
+            <button class="close-btn" @click="showPasswordChangeDialog = false">×</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-description">
+              パスワードを変更します。<br>
+              現在のパスワードと新しいパスワードを入力してください。
+            </p>
+            <div class="form-group">
+              <label>現在のパスワード *</label>
+              <input type="password" v-model="currentPassword" placeholder="現在のパスワードを入力"
+                :disabled="isChangingPassword" />
+            </div>
+            <div class="form-group">
+              <label>新しいパスワード *</label>
+              <input type="password" v-model="newPassword" placeholder="新しいパスワードを入力（6文字以上）"
+                :disabled="isChangingPassword" />
+            </div>
+            <div class="form-group">
+              <label>新しいパスワード（確認） *</label>
+              <input type="password" v-model="confirmPassword" placeholder="新しいパスワードを再入力"
+                :disabled="isChangingPassword" />
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button @click="showPasswordChangeDialog = false" class="cancel-btn-modal" :disabled="isChangingPassword">
+              キャンセル
+            </button>
+            <button @click="changePassword" class="submit-btn" :disabled="isChangingPassword">
+              {{ isChangingPassword ? '変更中...' : '変更する' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1274,6 +1055,182 @@ textarea:disabled {
   cursor: not-allowed;
 }
 
+.password-reset-btn {
+  width: 100%;
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-top: 10px;
+  transition: all 0.3s;
+}
+
+.password-reset-btn:hover {
+  background: #5568d3;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.password-reset-modal {
+  max-width: 450px;
+}
+
+.password-change-modal {
+  max-width: 500px;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 8px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: #333;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: #333;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.modal-body .form-group {
+  margin-bottom: 1.25rem;
+}
+
+.modal-body .form-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+  color: #333;
+}
+
+.modal-body .form-group input[type="password"],
+.modal-body .form-group input[type="email"],
+.modal-body .form-group input[type="text"] {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+
+.modal-body .form-group input:focus {
+  outline: none;
+  border-color: #4CAF50;
+}
+
+.modal-body .form-group input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.cancel-btn-modal {
+  background: white;
+  border: 1px solid #ddd;
+  color: #666;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.cancel-btn-modal:hover {
+  background: #f5f5f5;
+}
+
+.cancel-btn-modal:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.submit-btn {
+  background: #4CAF50;
+  border: none;
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.submit-btn:hover {
+  background: #45a049;
+}
+
+.submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modal-description {
+  color: #666;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
 .res-footer {
   text-align: right;
 }
@@ -1300,30 +1257,6 @@ textarea:disabled {
 .cancel-btn:hover {
   background: #e74c3c;
   color: white;
-}
-
-/* スピナー */
-.spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin-right: 8px;
-  vertical-align: middle;
-}
-
-.spinner-danger {
-  border: 2px solid rgba(231, 76, 60, 0.3);
-  border-top-color: #e74c3c;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 768px) {
