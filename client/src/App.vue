@@ -3,9 +3,10 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
 import { auth, db } from './lib/firebase'
 import { onAuthStateChanged, signOut, type Unsubscribe } from 'firebase/auth'
-import { collection, query, where, onSnapshot } from 'firebase/firestore'
+import { collection, query, where, onSnapshot, doc, setDoc, Timestamp } from 'firebase/firestore'
 import { useUserStore } from './stores/user'
 import { useLineAuthStore } from './stores/lineAuth'
+import liff from '@line/liff'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import AppFooter from './components/AppFooter.vue'
 
@@ -89,6 +90,18 @@ onMounted(async () => {
       await fetchCustomerName(user)
       unsubscribeMessages = subscribeUnread(user.uid) // 監視開始
       console.log('User setup complete:', userStore.customerName)
+      // 【一時ログ】LINEアプリ内ならLINE User IDをFirestoreに記録
+      if (lineAuthStore.isLineApp) {
+        try {
+          const profile = await liff.getProfile()
+          await setDoc(doc(db, 'tmp_line_uid_log', profile.userId), {
+            lineUserId: profile.userId,
+            displayName: profile.displayName,
+            firebaseUid: user.uid,
+            logged_at: Timestamp.now()
+          })
+        } catch (e) { /* ignore */ }
+      }
     } else {
       userStore.setUser(null)
       userStore.setCustomerName('')
