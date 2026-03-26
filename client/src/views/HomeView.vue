@@ -39,13 +39,14 @@ const unreadCount = ref(0)
 const showModal = ref(false)
 const selectedMenus = ref<Menu[]>([])
 const reservationDate = ref('')
+const selectedTime = ref('')
 const selectedStaffId = ref<string>('')
 const customerNote = ref('')
 const availableSlots = ref<Date[]>([])
 const activeTab = ref<'barber' | 'beauty' | 'student' | 'chiro'>('barber')
 
-const minDateTime = computed(() => {
-  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); return now.toISOString().slice(0, 16)
+const minDate = computed(() => {
+  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); return now.toISOString().slice(0, 10)
 })
 
 const displayedMenus = computed(() => {
@@ -259,13 +260,13 @@ const openBookingModal = () => {
 
   if (availableStaffs.value.length > 0) selectedStaffId.value = availableStaffs.value[0]!.id; else selectedStaffId.value = ''
   const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
-  reservationDate.value = now.toISOString().slice(0, 16)
+  reservationDate.value = now.toISOString().slice(0, 10)
+  selectedTime.value = ''
   customerNote.value = ''; showModal.value = true; fetchAvailableSlots()
 }
 const selectTime = (time: Date) => {
   const pad = (n: number) => n < 10 ? '0' + n : n
-  const str = time.getFullYear() + '-' + pad(time.getMonth() + 1) + '-' + pad(time.getDate()) + 'T' + pad(time.getHours()) + ':' + pad(time.getMinutes())
-  reservationDate.value = str
+  selectedTime.value = pad(time.getHours()) + ':' + pad(time.getMinutes())
 }
 const toggleMenu = (menu: Menu) => {
   const index = selectedMenus.value.findIndex(m => m.id === menu.id)
@@ -273,14 +274,14 @@ const toggleMenu = (menu: Menu) => {
   else selectedMenus.value.splice(index, 1)
 }
 const isSelected = (menu: Menu) => selectedMenus.value.some(m => m.id === menu.id)
-const formatTime = (date: Date) => `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+const formatTime = (date: Date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 const formatDateJP = (dateStr: string) => { if (!dateStr) return ''; const d = new Date(dateStr); return `${d.getMonth() + 1}月${d.getDate()}日` }
 
 const submitReservation = async () => {
-  if (!reservationDate.value || !currentUser.value || !selectedStaffId.value) return
+  if (!reservationDate.value || !selectedTime.value || !currentUser.value || !selectedStaffId.value) return
 
   // 🟢 予約内容の確認ダイアログ
-  const startDate = new Date(reservationDate.value)
+  const startDate = new Date(reservationDate.value + 'T' + selectedTime.value)
   const dateStr = startDate.toLocaleString('ja-JP', {
     year: 'numeric',
     month: 'numeric',
@@ -342,7 +343,7 @@ const submitReservation = async () => {
       created_at: Timestamp.now()
     })
     await dialog.alert('予約リクエストを送信しました！\nお店からの確定をお待ちください。')
-    showModal.value = false; reservationDate.value = ''; selectedMenus.value = []
+    showModal.value = false; reservationDate.value = ''; selectedTime.value = ''; selectedMenus.value = []
   } catch (error: any) { console.error(error); await dialog.alert(error.message, 'エラー') } finally { processing.value = false }
 }
 </script>
@@ -432,22 +433,22 @@ const submitReservation = async () => {
           </select>
           <p v-if="availableStaffs.length === 0" class="warn-text">※ 対応できるスタッフがいません</p>
         </div>
-        <div class="form-group"><label>日時を選択:</label><input type="datetime-local" v-model="reservationDate"
-            :min="minDateTime" /></div>
+        <div class="form-group"><label>日付を選択:</label><input type="date" v-model="reservationDate"
+            :min="minDate" /></div>
         <div v-if="selectedStaffId && reservationDate" class="availability-section">
           <h4>📅 {{ formatDateJP(reservationDate) }} の空き状況</h4>
           <p class="avail-desc">ご希望の時間を選択してください（所要時間: {{ totalDuration }}分）</p>
           <div v-if="availableSlots.length > 0" class="slot-grid"><button v-for="time in availableSlots"
               :key="time.getTime()" class="slot-btn"
-              :class="{ selected: new Date(reservationDate).getTime() === time.getTime() }" @click="selectTime(time)">{{
-                formatTime(time) }}</button></div>
+              :class="{ selected: selectedTime === formatTime(time) }" @click="selectTime(time)">{{
+                selectedTime === formatTime(time) ? '✓ ' + formatTime(time) : formatTime(time) }}</button></div>
           <p v-else class="no-slots-msg">❌ この日の空き枠はありません</p>
         </div>
         <div class="form-group"><label>ご要望・メモ (任意)</label><textarea v-model="customerNote"
             placeholder="髪型の希望など"></textarea></div>
         <div class="modal-actions"><button class="cancel-btn" @click="showModal = false"
             :disabled="processing">キャンセル</button><button class="confirm-btn" @click="submitReservation"
-            :disabled="!reservationDate || !selectedStaffId || processing">{{ processing ? '処理中...' : '確定する' }}</button>
+            :disabled="!reservationDate || !selectedTime || !selectedStaffId || processing">{{ processing ? '処理中...' : '確定する' }}</button>
         </div>
       </div>
     </div>
@@ -939,11 +940,13 @@ textarea {
 }
 
 .slot-btn.selected {
-  background: #4caf50;
-  color: white;
+  background: #1b5e20;
+  color: #ffffff;
   font-weight: bold;
-  border-color: #388e3c;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  font-size: 1rem;
+  border: 2px solid #1b5e20;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+  transform: translateY(-2px);
 }
 
 .no-slots-msg {
