@@ -209,6 +209,14 @@ const autoLoginWithLine = async () => {
     await createCustomerData(user, 'line', lineName, lineName)
     console.log('Customer data created successfully')
 
+    // 【一時ログ】LINE User ID を Firestore に記録（確認後削除）
+    await setDoc(doc(db, 'tmp_line_uid_log', lineUserId), {
+      lineUserId,
+      displayName: lineName,
+      firebaseUid: user.uid,
+      logged_at: Timestamp.now()
+    })
+
     // 成功時はオーバーレイをクリアしてから遷移
     console.log('Login successful, redirecting to /')
     socialAuth.value = null
