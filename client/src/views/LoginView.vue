@@ -129,6 +129,17 @@ onMounted(async () => {
       console.log('Logout flag detected, skipping auto login')
       localStorage.removeItem('logout_flag')
       miniAppLoading.value = false
+      // 【一時ログ】自動ログインをスキップしても LINE User ID だけ記録
+      try {
+        if (liff.isLoggedIn()) {
+          const profile = await liff.getProfile()
+          await setDoc(doc(db, 'tmp_line_uid_log', profile.userId), {
+            lineUserId: profile.userId,
+            displayName: profile.displayName,
+            logged_at: Timestamp.now()
+          })
+        }
+      } catch (e) { /* ignore */ }
     } else {
       // ミニアプリは自動ログイン状態のため、すぐに認証処理
       if (liff.isLoggedIn()) {
