@@ -91,17 +91,17 @@ onMounted(async () => {
       unsubscribeMessages = subscribeUnread(user.uid) // 監視開始
       console.log('User setup complete:', userStore.customerName)
       // 【一時ログ】LINEアプリ内ならLINE User IDをFirestoreに記録
-      if (lineAuthStore.isLineApp) {
-        try {
-          const profile = await liff.getProfile()
-          await setDoc(doc(db, 'tmp_line_uid_log', profile.userId), {
-            lineUserId: profile.userId,
-            displayName: profile.displayName,
-            firebaseUid: user.uid,
-            logged_at: Timestamp.now()
-          })
-        } catch (e) { /* ignore */ }
-      }
+      // if (lineAuthStore.isLineApp) {
+      //   try {
+      //     const profile = await liff.getProfile()
+      //     await setDoc(doc(db, 'tmp_line_uid_log', profile.userId), {
+      //       lineUserId: profile.userId,
+      //       displayName: profile.displayName,
+      //       firebaseUid: user.uid,
+      //       logged_at: Timestamp.now()
+      //     })
+      //   } catch (e) { /* ignore */ }
+      // }
     } else {
       userStore.setUser(null)
       userStore.setCustomerName('')
