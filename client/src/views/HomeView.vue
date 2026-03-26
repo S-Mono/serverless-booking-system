@@ -58,6 +58,12 @@ const displayedMenus = computed(() => {
 // 前回の予約データ保持用
 const lastReservation = ref<any>(null)
 
+const lastReservationMenuLabel = computed(() => {
+  const items = lastReservation.value?.menu_items as { title: string }[] | undefined
+  if (!items?.length) return ''
+  return items.map(m => m.title).join(' + ')
+})
+
 // 最新の予約を1件取得する関数
 const fetchLastReservation = async (userId: string) => {
   try {
@@ -351,7 +357,7 @@ const submitReservation = async () => {
           <div class="repeat-card">
             <span class="repeat-label">前回のメニュー:</span>
             <span class="repeat-menu-text">
-              {{lastReservation.menu_items.map((m: any) => m.title).join(' + ')}}
+              {{ lastReservationMenuLabel }}
             </span>
             <button @click="bookWithLastMenu" class="repeat-btn">これで予約</button>
           </div>
