@@ -5,9 +5,13 @@ import { db, auth } from '../lib/firebase'
 import { collection, getDocs, addDoc, query, where, Timestamp, orderBy, getDoc, doc, limit } from 'firebase/firestore'
 import { onAuthStateChanged, type Unsubscribe } from 'firebase/auth'
 import { useDialogStore } from '../stores/dialog'
+import { useLineAuthStore } from '@/stores/lineAuth'
+import { liff } from '@line/liff'
+import { reportLiffError } from '../lib/errorReporter'
 
 const dialog = useDialogStore()
 const router = useRouter()
+const lineAuthStore = useLineAuthStore()
 
 // 🟢 修正1: price_with_tax を定義に追加
 interface Menu {
@@ -322,7 +326,7 @@ const submitReservation = async () => {
       total_price: totalAmount.value, total_duration_min: totalDuration.value, source: 'web', status: 'pending', note: customerNote.value || '', created_at: Timestamp.now()
     })
 
-    // 🟢 追加: LINE Notify 送信（コメントアウト版）
+    // 🟢 追加: LINE Notify 送信（コメントアウト）
     // try {
     //   const NOTIFY_API_URL = 'https://send-line-notice-799586295685.asia-northeast1.run.app';
     //   const dateStr = startDate.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -342,9 +346,41 @@ const submitReservation = async () => {
       is_read: false,
       created_at: Timestamp.now()
     })
+
+    // 1. LIFF環境（LINEアプリ内）かどうかを確認
+    if (lineAuthStore.isLineApp) {
+      const confirmLine = await dialog.open(
+        'LINE公式アカウントに予約控えを送信しますか？\n送信するとスタッフと直接チャットができるようになります。',
+        { title: 'LINE連携', cancelText: 'いいえ', confirmText: 'はい' }
+      )
+
+      if (confirmLine) {
+        const lineMsg = `【予約控え】\n以下の日時で仮予約を承りました。\n\n日時: ${dateStr}\nメニュー: ${selectedMenus.value.map(m => m.title).join(', ')}\n担当: ${staffName}\n`
+
+        try {
+          // 2. ユーザーの代わりにメッセージを送信
+          await liff.sendMessages([{ type: 'text', text: lineMsg }])
+        } catch (e) {
+          console.error('LINE送信失敗:', e)
+          // 3. 失敗（権限不足など）した場合はURLスキームで誘導
+          const lineId = '貴店のLINE_ID' // 例: @shop_id
+          const fallbackUrl = `https://line.me/R/oaMessage/${lineId}/?${encodeURIComponent(lineMsg)}`
+          await dialog.alert('直接送信に失敗しました。次の画面で「送信」を押して控えを完了してください。')
+          window.location.href = fallbackUrl
+        }
+      }
+    }
+
     await dialog.alert('予約リクエストを送信しました！\nお店からの確定をお待ちください。')
-    showModal.value = false; reservationDate.value = ''; selectedTime.value = ''; selectedMenus.value = []
-  } catch (error: any) { console.error(error); await dialog.alert(error.message, 'エラー') } finally { processing.value = false }
+    showModal.value = false;
+    reservationDate.value = '';
+    selectedTime.value = '';
+    selectedMenus.value = []
+  } catch (error: any) {
+    console.error(error); await dialog.alert(error.message, 'エラー')
+  } finally {
+    processing.value = false
+  }
 }
 </script>
 
@@ -378,10 +414,12 @@ const submitReservation = async () => {
       <div class="menu-section-wrapper">
         <div class="menu-header">
           <h2 class="section-title">
-            {{ activeTab === 'barber' ? '理容メニュー' : (activeTab === 'beauty' ? '美容メニュー' : (activeTab === 'student' ? '学生メニュー（中学生まで）' : 'カイロプラクティック')) }}
+            {{ activeTab === 'barber' ? '理容メニュー' : (activeTab === 'beauty' ? '美容メニュー' : (activeTab === 'student' ?
+              '学生メニュー（中学生まで）' : 'カイロプラクティック')) }}
           </h2>
           <p class="section-desc">
-            {{ activeTab === 'chiro' ? '身体のメンテナンスメニューです' : (activeTab === 'student' ? '中学生までの学生向けメニューです' : 'ご希望のメニューを選択してください') }}
+            {{ activeTab === 'chiro' ? '身体のメンテナンスメニューです' : (activeTab === 'student' ? '中学生までの学生向けメニューです' :
+              'ご希望のメニューを選択してください') }}
           </p>
         </div>
         <ul class="menu-list">
@@ -433,14 +471,14 @@ const submitReservation = async () => {
           </select>
           <p v-if="availableStaffs.length === 0" class="warn-text">※ 対応できるスタッフがいません</p>
         </div>
-        <div class="form-group"><label>日付を選択:</label><input type="date" v-model="reservationDate"
-            :min="minDate" /></div>
+        <div class="form-group"><label>日付を選択:</label><input type="date" v-model="reservationDate" :min="minDate" />
+        </div>
         <div v-if="selectedStaffId && reservationDate" class="availability-section">
           <h4>📅 {{ formatDateJP(reservationDate) }} の空き状況</h4>
           <p class="avail-desc">ご希望の時間を選択してください（所要時間: {{ totalDuration }}分）</p>
           <div v-if="availableSlots.length > 0" class="slot-grid"><button v-for="time in availableSlots"
-              :key="time.getTime()" class="slot-btn"
-              :class="{ selected: selectedTime === formatTime(time) }" @click="selectTime(time)">{{
+              :key="time.getTime()" class="slot-btn" :class="{ selected: selectedTime === formatTime(time) }"
+              @click="selectTime(time)">{{
                 selectedTime === formatTime(time) ? '✓ ' + formatTime(time) : formatTime(time) }}</button></div>
           <p v-else class="no-slots-msg">❌ この日の空き枠はありません</p>
         </div>
@@ -448,7 +486,8 @@ const submitReservation = async () => {
             placeholder="髪型の希望など"></textarea></div>
         <div class="modal-actions"><button class="cancel-btn" @click="showModal = false"
             :disabled="processing">キャンセル</button><button class="confirm-btn" @click="submitReservation"
-            :disabled="!reservationDate || !selectedTime || !selectedStaffId || processing">{{ processing ? '処理中...' : '確定する' }}</button>
+            :disabled="!reservationDate || !selectedTime || !selectedStaffId || processing">{{ processing ? '処理中...' :
+              '確定する' }}</button>
         </div>
       </div>
     </div>

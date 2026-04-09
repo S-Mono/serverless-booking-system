@@ -3,10 +3,10 @@ import { createPinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
-import { reportError } from './lib/errorReporter'
+// import { reportError } from './lib/errorReporter'
 
 // グローバルAbortErrorハンドラー（vConsoleより先に設定）
-window.addEventListener('unhandledrejection', (event) => {
+window.addEventListener('unhandledrejection', async(event) => {
   const reason = event.reason
   
   // AbortErrorを多様な方法で検出
@@ -30,13 +30,15 @@ window.addEventListener('unhandledrejection', (event) => {
   console.error('Reason:', reason)
   console.error('Type:', typeof reason)
   console.error('Stack:', reason?.stack)
-  
+
+  // ✅ エラーが起きた時だけ動的にインポートして実行
+  const { reportError } = await import('./lib/errorReporter')
   // Firestoreにエラーレポート送信
   reportError(reason, 'UNHANDLED_REJECTION')
 }, true) // キャプチャフェーズで先に処理
 
 // グローバルエラーハンドラー
-window.addEventListener('error', (event) => {
+window.addEventListener('error', async(event) => {
   console.error('=== Global Error ===')
   console.error('Message:', event.message)
   console.error('Filename:', event.filename)
@@ -44,6 +46,8 @@ window.addEventListener('error', (event) => {
   console.error('Error:', event.error)
   
   // Firestoreにエラーレポート送信
+  const { reportError } = await import('./lib/errorReporter')
+
   reportError(event.error || new Error(event.message), 'GLOBAL_ERROR', {
     filename: event.filename,
     lineno: event.lineno,

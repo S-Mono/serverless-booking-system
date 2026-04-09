@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { db, auth } from '../lib/firebase'
+import { db, auth, messaging, VAPID_KEY } from '../lib/firebase'
 import { collection, getDocs, setDoc, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, Timestamp, onSnapshot, getDoc, type Unsubscribe } from 'firebase/firestore'
 import { useRouter } from 'vue-router'
 import { useDialogStore } from '../stores/dialog'
 // プッシュ通知機能（管理者専用・LINEブラウザでは動作しない）
-import { messaging, VAPID_KEY } from '../lib/firebase'
+import { utils, writeFile } from 'xlsx-js-style'
 import { getToken, onMessage } from 'firebase/messaging'
-import * as XLSX from 'xlsx-js-style'
 
 const router = useRouter()
 const dialog = useDialogStore()
@@ -305,10 +304,7 @@ const initData = async (fetchMaster = true) => {
           // 1分以内に作成された予約（＝過去データ取得時ではなく、今の新規予約）なら
           if ((now - createdAt) < 60000 && !loading.value) {
 
-            // 審査用：プッシュ通知機能を一時的に無効化
-            // 🔴 修正: 通知がONのときかつWEB予約のときだけ実行する
-            // if (isNotifyEnabled.value && data.source === 'web') {
-            if (data.source === 'web') {
+            if (isNotifyEnabled.value && data.source === 'web') {
               // avoid duplicates when FCM also delivers the same reservation
               const rId = change.doc.id
               if (isRecentlyNotified(rId)) {
@@ -394,8 +390,6 @@ const fetchHistoryReservations = () => {
   })
 }
 
-// 審査用：プッシュ通知機能を一時的に無効化
-/*
 // 🔔 1. 画面ロード時に現在の通知設定を確認する
 const checkNotificationStatus = async () => {
   try {
@@ -465,10 +459,8 @@ const toggleNotification = async () => {
     await requestNotificationPermission()
   }
 }
-*/
 
-// 審査用：プッシュ通知機能を一時的に無効化
-/*
+
 // 🔔 3. 通知ON処理 (既存の requestNotificationPermission を少し修正)
 const requestNotificationPermission = async () => {
   try {
@@ -557,9 +549,7 @@ const requestNotificationPermission = async () => {
     dialog.alert(`設定に失敗しました: ${errorMsg}`)
   }
 }
-*/
-// 審査用：プッシュ通知機能を一時的に無効化
-/*
+
 // 🔔 4. 通知OFF処理 (新規)
 const turnOffNotification = async () => {
   try {
@@ -589,7 +579,7 @@ const turnOffNotification = async () => {
     dialog.alert(`解除に失敗しました: ${errorMsg}`)
   }
 }
-*/
+
 
 // 電話番号フォーマット（ハイフン自動補完）
 const formatPhoneNumber = (value: string) => {
@@ -1313,8 +1303,6 @@ onMounted(async () => {
   initData()
   // try to preload the chime buffer for lower-latency playback
   preloadChime()
-  // 審査用：プッシュ通知機能を一時的に無効化
-  /*
   // 通知状態を確認・復元
   await checkNotificationStatus()
 
@@ -1356,15 +1344,13 @@ onMounted(async () => {
       console.warn('onMessage registration failed', e)
     }
   }
-  */
 })
 
 onUnmounted(() => {
   try { if (unsubscribeDay) unsubscribeDay() } catch (_) { }
   try { if (unsubscribeList) unsubscribeList() } catch (_) { }
   try { if (unsubscribeHistory) unsubscribeHistory() } catch (_) { }
-  // 審査用：プッシュ通知機能を一時的に無効化
-  // try { if (unregisterFcmOnMessage) unregisterFcmOnMessage() } catch (_) { }
+  try { if (unregisterFcmOnMessage) unregisterFcmOnMessage() } catch (_) { }
 })
 
 // Excel出力関数
@@ -1552,11 +1538,11 @@ const exportReservationsToExcel = async () => {
     })
 
     // ワークブックとワークシートを作成
-    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData)
+    const worksheet = utils.aoa_to_sheet(worksheetData)
 
     // セルスタイルを適用
     cellStyles.forEach(({ row, col, style }) => {
-      const cellAddress = XLSX.utils.encode_cell({ r: row, c: col })
+      const cellAddress = utils.encode_cell({ r: row, c: col })
       if (!worksheet[cellAddress]) {
         worksheet[cellAddress] = { t: 's', v: '' }
       }
@@ -1576,14 +1562,14 @@ const exportReservationsToExcel = async () => {
     })
     worksheet['!cols'] = colWidths
 
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, '予約一覧')
+    const workbook = utils.book_new()
+    utils.book_append_sheet(workbook, worksheet, '予約一覧')
 
     // ファイル名を生成（表示期間の開始日）
     const fileName = `予約一覧_${startDate.getFullYear()}${String(startDate.getMonth() + 1).padStart(2, '0')}${String(startDate.getDate()).padStart(2, '0')}.xlsx`
 
     // ファイルをダウンロード
-    XLSX.writeFile(workbook, fileName)
+    writeFile(workbook, fileName)
 
     dialog.alert(`${reservations.length}件の予約をExcelに出力しました`, '出力完了')
   } catch (error) {
@@ -1600,11 +1586,9 @@ const exportReservationsToExcel = async () => {
         <h2>予約管理ダッシュボード</h2>
       </div>
       <div class="header-right">
-        <!-- 審査用：プッシュ通知機能を一時的に無効化
         <button @click="toggleNotification" class="notify-btn" :class="{ 'active': isNotifyEnabled }">
           {{ isNotifyEnabled ? '🔕 通知OFFにする' : '🔔 通知ONにする' }}
         </button>
-        -->
         <button @click="exportReservationsToExcel" class="export-btn" title="当日から未来の予約をExcelに出力">📥 Excel出力</button>
         <button @click="router.push('/admin/customers')" class="nav-link-btn">👥 顧客管理</button>
         <button @click="router.push('/admin/sales')" class="nav-link-btn">📊 売上分析</button>
@@ -1868,7 +1852,7 @@ const exportReservationsToExcel = async () => {
             </div>
           </div>
           <span v-if="validationErrors.customer_phone" class="error-message">{{ validationErrors.customer_phone
-            }}</span>
+          }}</span>
         </div>
         <div class="form-group"><label>メモ</label><textarea v-model="newReservation.note"
             placeholder="特記事項..."></textarea>
