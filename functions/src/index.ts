@@ -1,5 +1,10 @@
-import {onDocumentCreated} from "firebase-functions/v2/firestore";
+import {
+  onDocumentCreated,
+  onDocumentUpdated,
+  onDocumentDeleted,
+} from "firebase-functions/v2/firestore";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {onSchedule} from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import * as nodemailer from "nodemailer";
@@ -48,6 +53,93 @@ const getLineChannelAccessToken = async (): Promise<string | null> => {
     });
     return null;
   }
+};
+
+type LineServiceNotificationTokenResponse = {
+  notificationToken?: string;
+  expiresIn?: number;
+  remainingCount?: number;
+  sessionId?: string;
+};
+
+const issueLineServiceNotificationToken = async (
+  liffAccessToken: string,
+  channelAccessToken: string
+): Promise<LineServiceNotificationTokenResponse> => {
+  const response = await axios.post(
+    "https://api.line.me/message/v3/notifier/token",
+    {
+      liffAccessToken,
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${channelAccessToken}`,
+      },
+    }
+  );
+
+  return response.data as LineServiceNotificationTokenResponse;
+};
+
+type SendLineServiceMessageInput = {
+  templateName: string;
+  notificationToken: string;
+  params: Record<string, string>;
+};
+
+const sendLineServiceMessage = async (
+  input: SendLineServiceMessageInput,
+  channelAccessToken: string
+): Promise<LineServiceNotificationTokenResponse> => {
+  const response = await axios.post(
+    "https://api.line.me/message/v3/notifier/send?target=service",
+    input,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${channelAccessToken}`,
+      },
+    }
+  );
+
+  return response.data as LineServiceNotificationTokenResponse;
+};
+
+const saveReservationServiceMessageSession = async (params: {
+  reservationId: string;
+  customerId: string;
+  templateName: string;
+  notificationToken?: string;
+  remainingCount?: number;
+  expiresIn?: number;
+  sessionId?: string;
+}) => {
+  const now = admin.firestore.Timestamp.now();
+  const expiresAt = typeof params.expiresIn === "number" ?
+    admin.firestore.Timestamp.fromMillis(Date.now() + params.expiresIn * 1000) :
+    null;
+
+  await admin
+    .firestore()
+    .collection("reservation_service_message_sessions")
+    .doc(params.reservationId)
+    .set(
+      {
+        reservation_id: params.reservationId,
+        customer_id: params.customerId,
+        notification_token: params.notificationToken || null,
+        remaining_count: typeof params.remainingCount === "number" ?
+          params.remainingCount :
+          null,
+        expires_at: expiresAt,
+        session_id: params.sessionId || null,
+        last_template_name: params.templateName,
+        updated_at: now,
+        created_at: now,
+      },
+      {merge: true}
+    );
 };
 
 // メール送信用のトランスポーター設定
@@ -342,6 +434,103 @@ export const onReservationCreated = onDocumentCreated(
           "担当スタッフより確定のご連絡をお待ちください。";
         await sendLineMessageToCustomer(lineUserId, confirmText, snap.id);
       }
+    }
+
+    // ── LINEミニアプリのサービスメッセージ送信（トリガー経由） ───────────
+    // callableを直接叩くと環境によってOPTIONSプリフライトが403になるため、
+    // 予約作成トリガー内で処理する。
+    const liffAccessToken =
+      typeof reservation.liff_access_token === "string" ?
+        reservation.liff_access_token.trim() :
+        "";
+    const buttonUrlCandidate =
+      typeof reservation.service_message_button_url === "string" ?
+        reservation.service_message_button_url.trim() :
+        "";
+    const fallbackBaseUrl = process.env.APP_URL ||
+      "https://serverless-booking-system-seven.vercel.app";
+    const buttonUrl = /^https:\/\//.test(buttonUrlCandidate) ?
+      buttonUrlCandidate :
+      `${fallbackBaseUrl.replace(/\/$/, "")}/mypage`;
+
+    if (
+      reservation.status === "pending" &&
+      customerId &&
+      liffAccessToken
+    ) {
+      const templateName =
+        process.env.LINE_SERVICE_TEMPLATE_TEMPORARY_RESERVATION ||
+        "tempreserv_s_ja";
+
+      try {
+        const channelAccessToken = await getLineChannelAccessToken();
+        if (!channelAccessToken) {
+          throw new Error("LINE channel access token is unavailable");
+        }
+
+        const issued = await issueLineServiceNotificationToken(
+          liffAccessToken,
+          channelAccessToken
+        );
+
+        if (!issued.notificationToken) {
+          throw new Error("Failed to issue LINE service notification token");
+        }
+
+        const sent = await sendLineServiceMessage(
+          {
+            templateName,
+            notificationToken: issued.notificationToken,
+            params: {
+              btn1_url: buttonUrl,
+            },
+          },
+          channelAccessToken
+        );
+
+        const latestToken = sent.notificationToken || issued.notificationToken;
+        await saveReservationServiceMessageSession({
+          reservationId: snap.id,
+          customerId,
+          templateName,
+          notificationToken: latestToken,
+          remainingCount: sent.remainingCount,
+          expiresIn: sent.expiresIn,
+          sessionId: sent.sessionId,
+        });
+
+        await snap.ref.update({
+          liff_access_token: admin.firestore.FieldValue.delete(),
+          service_message_button_url: admin.firestore.FieldValue.delete(),
+          service_message_sent_at: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        logger.info("Temporary reservation service message sent in trigger", {
+          reservationId: snap.id,
+          customerId,
+          templateName,
+          remainingCount: sent.remainingCount,
+        });
+      } catch (serviceError: unknown) {
+        const errorObj = serviceError as {
+          message?: string;
+          response?: { status?: number; data?: unknown };
+        };
+        logger.error("Failed temporary service message in trigger", {
+          reservationId: snap.id,
+          customerId,
+          error: errorObj.message,
+          status: errorObj.response?.status,
+          data: errorObj.response?.data,
+        });
+      }
+    } else {
+      logger.info("Skip trigger service message", {
+        reservationId: snap.id,
+        hasCustomerId: !!customerId,
+        hasLiffAccessToken: !!liffAccessToken,
+        status: reservation.status,
+      });
     }
   }
 );
@@ -852,6 +1041,205 @@ export const resetPasswordWithToken = onCall(
         token,
       });
       throw new HttpsError("internal", "Failed to reset password");
+    }
+  }
+);
+
+// --------------------------------------------------------------------------
+// 以降は後続のサービスメッセージ送信用処理
+// --------------------------------------------------------------------------
+
+const sendSubsequentServiceMessage = async (
+  reservationId: string,
+  customerId: string,
+  templateName: string,
+  params: Record<string, string>
+) => {
+  try {
+    const db = admin.firestore();
+    const sessionDoc = await db
+      .collection("reservation_service_message_sessions")
+      .doc(reservationId)
+      .get();
+
+    if (!sessionDoc.exists) {
+      logger.info("No service message session found", {reservationId});
+      return;
+    }
+
+    const sessionData = sessionDoc.data();
+    if (!sessionData?.notification_token) {
+      logger.info("No notification token in session", {reservationId});
+      return;
+    }
+
+    const channelAccessToken = await getLineChannelAccessToken();
+    if (!channelAccessToken) {
+      logger.error(
+        "No channel access token available for subsequent service message"
+      );
+      return;
+    }
+
+    const fallbackBaseUrl =
+      process.env.APP_URL || "https://serverless-booking-system-seven.vercel.app";
+    const defaultUrl = `${fallbackBaseUrl.replace(/\/$/, "")}/mypage`;
+
+    if (!params.btn1_url) params.btn1_url = defaultUrl;
+    if (!params.btn2_url) params.btn2_url = defaultUrl;
+    if (!params.btn3_url) params.btn3_url = defaultUrl;
+    if (!params.btn4_url) params.btn4_url = defaultUrl;
+
+    const sent = await sendLineServiceMessage(
+      {
+        templateName,
+        notificationToken: sessionData.notification_token,
+        params,
+      },
+      channelAccessToken
+    );
+
+    await saveReservationServiceMessageSession({
+      reservationId,
+      customerId,
+      templateName,
+      notificationToken: sent.notificationToken ||
+        sessionData.notification_token,
+      remainingCount: sent.remainingCount,
+      expiresIn: sent.expiresIn,
+      sessionId: sent.sessionId,
+    });
+
+    logger.info("Subsequent service message sent successfully", {
+      reservationId,
+      templateName,
+    });
+  } catch (error: unknown) {
+    const errorObj = error as {
+      message?: string;
+      response?: { status?: number; data?: unknown };
+    };
+    logger.error("Failed to send subsequent service message", {
+      reservationId,
+      templateName,
+      error: errorObj.message,
+      status: errorObj.response?.status,
+      data: errorObj.response?.data,
+    });
+  }
+};
+
+export const onReservationUpdated = onDocumentUpdated(
+  {
+    document: "reservations/{reservationId}",
+    region: "asia-northeast1",
+  },
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+
+    if (!before || !after) return;
+
+    const reservationId = event.params.reservationId;
+    const customerId = after.customer_id;
+    if (!customerId) return;
+
+    if (before.status === "pending" && after.status === "confirmed") {
+      logger.info("Reservation confirmed, sending service message", {
+        reservationId,
+      });
+      await sendSubsequentServiceMessage(
+        reservationId,
+        customerId,
+        process.env.LINE_SERVICE_TEMPLATE_BOOKING_CONFIRMED ||
+          "book_request_s_b_ja",
+        {number: reservationId.slice(0, 8).toUpperCase()}
+      );
+    }
+
+    if (before.status !== "cancelled" && after.status === "cancelled") {
+      logger.info("Reservation cancelled by shop, sending service message", {
+        reservationId,
+      });
+      await sendSubsequentServiceMessage(
+        reservationId,
+        customerId,
+        process.env.LINE_SERVICE_TEMPLATE_AUTO_CANCEL || "auto_cancel_s_ja",
+        {number: reservationId.slice(0, 8).toUpperCase()}
+      );
+    }
+  }
+);
+
+export const onReservationDeleted = onDocumentDeleted(
+  {
+    document: "reservations/{reservationId}",
+    region: "asia-northeast1",
+  },
+  async (event) => {
+    const deleted = event.data?.data();
+    if (!deleted) return;
+
+    const reservationId = event.params.reservationId;
+    const customerId = deleted.customer_id;
+    if (!customerId) return;
+
+    logger.info(
+      "Reservation deleted (user cancelled), sending service message",
+      {reservationId}
+    );
+    await sendSubsequentServiceMessage(
+      reservationId,
+      customerId,
+      process.env.LINE_SERVICE_TEMPLATE_USER_CANCEL || "user_cancle_s_ja",
+      {number: reservationId.slice(0, 8).toUpperCase()}
+    );
+  }
+);
+
+export const sendBookingReminders = onSchedule(
+  {
+    schedule: "0 8 * * *",
+    timeZone: "Asia/Tokyo",
+    region: "asia-northeast1",
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = new Date();
+    const tomorrowStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+      0, 0, 0
+    );
+    const tomorrowEnd = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+      23, 59, 59
+    );
+
+    const startTs = admin.firestore.Timestamp.fromDate(tomorrowStart);
+    const endTs = admin.firestore.Timestamp.fromDate(tomorrowEnd);
+
+    const snapshot = await db.collection("reservations")
+      .where("start_at", ">=", startTs)
+      .where("start_at", "<=", endTs)
+      .where("status", "==", "confirmed")
+      .get();
+
+    logger.info(`Sending reminders for ${snapshot.size} reservations`);
+
+    for (const doc of snapshot.docs) {
+      const reservation = doc.data();
+      if (!reservation.customer_id) continue;
+
+      await sendSubsequentServiceMessage(
+        doc.id,
+        reservation.customer_id,
+        process.env.LINE_SERVICE_TEMPLATE_REMINDER || "remind_s_b_ja",
+        {number: doc.id.slice(0, 8).toUpperCase(), daytime: "1日"}
+      );
     }
   }
 );
