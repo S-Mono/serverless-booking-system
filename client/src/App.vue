@@ -308,6 +308,10 @@ const retryInit = async () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  box-sizing: border-box;
+  overflow: hidden;
   /* ノーマルモード: 下に34px */
   padding-bottom: 34px;
   padding-bottom: env(safe-area-inset-bottom, 34px);
@@ -337,8 +341,9 @@ header {
 
 main {
   width: 100%;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app-layout.admin-mode {
@@ -480,8 +485,15 @@ main {
   background: #42b883;
   color: white;
   text-decoration: none;
-  padding: 0.5rem 1rem;
+  padding: 0.62rem 0.95rem;
   border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  min-width: 120px;
+  font-weight: bold;
+  line-height: 1.1;
   white-space: nowrap;
 }
 
@@ -591,6 +603,13 @@ main {
     background-color: #444;
     border: none;
     margin-top: 1rem;
+  }
+
+  .login-btn {
+    width: 100%;
+    min-height: 46px;
+    padding: 0.8rem 0.7rem;
+    font-size: 0.98rem;
   }
 }
 

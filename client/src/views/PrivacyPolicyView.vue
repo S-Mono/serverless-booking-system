@@ -1,17 +1,7 @@
-<script setup lang="ts">
-import { useRouter } from 'vue-router'
-
-const router = useRouter()
-
-const goBack = () => {
-    router.back()
-}
-</script>
-
 <template>
     <div class="privacy-container">
         <div class="privacy-header">
-            <button class="back-btn" @click="goBack">← 戻る</button>
+            <router-link to="/" class="back-btn">← 予約画面に戻る</router-link>
             <h1>プライバシーポリシー</h1>
         </div>
 
@@ -23,7 +13,8 @@ const goBack = () => {
                 <p>
                     <strong>事業者名:</strong> ヘアーサロン ジョイス<br>
                     <strong>所在地:</strong> 北海道札幌市<br>
-                    <strong>電話番号:</strong> 011-694-5449<br>
+                    <strong>フリーダイヤル:</strong> 0120-10-5449<br>
+                    <strong>代表電話:</strong> 011-694-5449 <small>（通常通話料）</small><br>
                     <strong>メールアドレス:</strong> monou1222@icloud.com
                 </p>
             </section>
@@ -191,7 +182,7 @@ const goBack = () => {
 .privacy-container {
     max-width: 800px;
     margin: 0 auto;
-    height: calc(100vh - 60px - 80px);
+    height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;

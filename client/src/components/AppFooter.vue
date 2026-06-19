@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
+
+const appVersion = __APP_VERSION__
 </script>
 
 <template>
     <footer class="app-footer">
         <div class="footer-content">
-            <p class="footer-copyright">&copy; 2025 ヘアーサロン JOY's 予約システム</p>
+            <p class="footer-copyright">&copy; 2025 ヘアーサロン JOY's 予約システム <span class="footer-version">v{{ appVersion }}</span></p>
             <div class="footer-links">
                 <RouterLink to="/terms" class="footer-link">利用規約</RouterLink>
                 <span class="footer-divider">|</span>
                 <RouterLink to="/privacy" class="footer-link">プライバシーポリシー</RouterLink>
+                <span class="footer-divider">|</span>
+                <RouterLink to="/releases" class="footer-link">リリース情報</RouterLink>
                 <span class="footer-divider">|</span>
                 <RouterLink to="/support" class="footer-link">カスタマーサポート</RouterLink>
             </div>
@@ -23,7 +27,7 @@ import { RouterLink } from 'vue-router'
 .app-footer {
     background-color: #f8f9fa;
     border-top: 1px solid #e0e0e0;
-    padding: 1rem 0;
+    padding: 0.3rem 0 calc(0.1rem + env(safe-area-inset-bottom, 0px) + 1px);
     margin-top: auto;
 }
 
@@ -35,25 +39,33 @@ import { RouterLink } from 'vue-router'
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: 0.35rem;
 }
 
 .footer-copyright {
     color: #666;
     font-size: 0.85rem;
-    margin: 0;
+    line-height: 1.2;
+    margin: 0.1rem 0 0;
 }
 
 .footer-credit {
     color: #666;
     font-size: 0.75rem;
+    line-height: 1.2;
     margin: 0;
+}
+
+.footer-version {
+    color: #9aa0a6;
+    font-size: 0.65rem;
+    margin-left: 0.4rem;
 }
 
 .footer-links {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.25rem;
 }
 
 .footer-link {
@@ -74,22 +86,29 @@ import { RouterLink } from 'vue-router'
 }
 
 @media (max-width: 768px) {
+    .app-footer {
+        padding: 0.2rem 0 calc(env(safe-area-inset-bottom, 0px) + 1px);
+    }
+
     .footer-content {
         flex-direction: column;
         text-align: center;
-        gap: 0.75rem;
+        gap: 0.25rem;
     }
 
     .footer-copyright {
         font-size: 0.8rem;
+        line-height: 1.2;
     }
 
     .footer-links {
         font-size: 0.8rem;
+        line-height: 1.2;
     }
 
     .footer-credit {
         font-size: 0.7rem;
+        line-height: 1.2;
     }
 
     .footer-link {

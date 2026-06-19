@@ -80,3 +80,33 @@ npm run set-admin -- --email admin@example.com --admin true
 # or (directly, from any folder)
 node tools/firebase-admin/set-admin.js --email admin@example.com --admin true
 ```
+
+Release notice broadcast (in-app messages)
+-----------------------------------------
+You can publish a release notice to all customers by writing to the existing `messages` collection.
+
+```bash
+# from tools/firebase-admin
+npm run send-release-notice -- \
+  --title "【重要】アップデートのお知らせ" \
+  --body "サービスメッセージ対応と連絡先表示を更新しました。" \
+  --releaseUrl /releases \
+  --version 1.1.0
+
+# dry run (no write)
+npm run send-release-notice -- \
+  --title "test" --body "test" --dryRun true
+```
+
+Fields written to `messages`:
+- `customer_id`
+- `title`
+- `body`
+- `release_url` (default: `/releases`)
+- `release_version`
+- `is_read` (`false`)
+- `created_at`
+
+For full production runbook details, see:
+
+- `tools/firebase-admin/README_RELEASE_NOTICE.md`

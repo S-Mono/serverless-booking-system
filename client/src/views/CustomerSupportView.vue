@@ -94,7 +94,7 @@ onUnmounted(() => {
     <div class="support-container">
         <div class="scroll-content">
             <div class="page-header">
-                <router-link to="/" class="back-btn">◀ 予約画面に戻る</router-link>
+                <router-link to="/" class="back-btn">← 予約画面に戻る</router-link>
                 <h2 class="page-title">カスタマーサポート</h2>
             </div>
 
@@ -104,8 +104,10 @@ onUnmounted(() => {
 
                     <div class="contact-form">
                         <div class="phone-info">
-                            <p class="phone-label">店舗直通電話</p>
-                            <a href="tel:011-694-5449" class="phone-number">📞 011-694-5449</a>
+                            <p class="phone-label">フリーダイヤル</p>
+                            <a href="tel:0120105449" class="phone-number phone-number-main">📞 0120-10-5449</a>
+                            <p class="phone-sub-label">代表電話 <span class="call-fee-note">（通常通話料）</span></p>
+                            <a href="tel:0116945449" class="phone-number phone-number-sub">011-694-5449</a>
                             <p class="phone-hint">営業時間内にお電話いただくとすぐに対応できます</p>
                             <div class="email-section">
                                 <p class="email-label">メールでのお問い合わせ</p>
@@ -142,7 +144,7 @@ onUnmounted(() => {
 .support-container {
     max-width: 800px;
     margin: 0 auto;
-    height: calc(100vh - 60px - 80px);
+    height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -188,11 +190,11 @@ onUnmounted(() => {
 }
 
 .back-btn {
-    background: transparent;
-    border: 1px solid #ccc;
-    color: #555;
-    padding: 0.4rem 1rem;
-    border-radius: 20px;
+    background: #42b883;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
     cursor: pointer;
     font-size: 0.9rem;
     text-decoration: none;
@@ -200,8 +202,7 @@ onUnmounted(() => {
 }
 
 .back-btn:hover {
-    background: #f0f0f0;
-    color: #333;
+    background: #35a372;
 }
 
 .content-wrapper {
@@ -254,6 +255,28 @@ onUnmounted(() => {
     padding: 0.5rem 1rem;
     border-radius: 4px;
     transition: background 0.2s;
+}
+
+.phone-number-main {
+    margin-bottom: 0.4rem;
+}
+
+.phone-sub-label {
+    font-size: 0.88rem;
+    color: #666;
+    margin: 0.3rem 0 0.2rem 0;
+}
+
+.call-fee-note {
+    font-size: 0.72rem;
+}
+
+.phone-number-sub {
+    display: block;
+    font-size: 1.08rem;
+    color: #2c7a59;
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
 }
 
 .phone-number:hover {
@@ -408,7 +431,7 @@ textarea:disabled {
 
 @media (max-width: 768px) {
     .support-container {
-        height: calc(100vh - 60px - 60px);
+        height: 100%;
     }
 
     .scroll-content {
