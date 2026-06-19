@@ -106,6 +106,63 @@ const sendLineServiceMessage = async (
   return response.data as LineServiceNotificationTokenResponse;
 };
 
+const isTemplateNotAllowedError = (error: unknown): boolean => {
+  const errorObj = error as {
+    message?: string;
+    response?: { status?: number; data?: { message?: string } };
+  };
+  return (
+    errorObj.response?.status === 403 &&
+    typeof errorObj.response?.data?.message === "string" &&
+    errorObj.response.data.message.includes("Not allowed template")
+  );
+};
+
+const sendLineServiceMessageWithTemplateFallback = async (
+  templateCandidates: string[],
+  notificationToken: string,
+  params: Record<string, string>,
+  channelAccessToken: string
+): Promise<{
+  response: LineServiceNotificationTokenResponse;
+  templateName: string;
+}> => {
+  const normalizedTemplates = Array.from(new Set(templateCandidates
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)));
+
+  let lastError: unknown = null;
+
+  for (const templateName of normalizedTemplates) {
+    try {
+      const response = await sendLineServiceMessage(
+        {
+          templateName,
+          notificationToken,
+          params,
+        },
+        channelAccessToken
+      );
+      return {response, templateName};
+    } catch (error: unknown) {
+      lastError = error;
+      if (isTemplateNotAllowedError(error)) {
+        logger.warn("Service template not allowed, trying next candidate", {
+          templateName,
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error("No template candidates configured for service message");
+};
+
 const saveReservationServiceMessageSession = async (params: {
   reservationId: string;
   customerId: string;
@@ -164,11 +221,32 @@ const createTransporter = () => {
   return nodemailer.createTransport(config);
 };
 
+const isEnabledByEnv = (
+  envValue: string | undefined,
+  defaultValue = true
+): boolean => {
+  if (typeof envValue !== "string") return defaultValue;
+
+  const normalized = envValue.trim().toLowerCase();
+  if (!normalized) return defaultValue;
+
+  return ["1", "true", "yes", "on"].includes(normalized);
+};
+
 const sendLineMessageToCustomer = async (
   lineUserId: string,
   text: string,
   reservationId: string
 ): Promise<void> => {
+  const enableCustomerPush = isEnabledByEnv(
+    process.env.LINE_ENABLE_CUSTOMER_PUSH,
+    true
+  );
+  if (!enableCustomerPush) {
+    logger.info("LINE customer push disabled by env", {reservationId});
+    return;
+  }
+
   const messagingToken = process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
 
   if (!messagingToken) {
@@ -458,9 +536,13 @@ export const onReservationCreated = onDocumentCreated(
       customerId &&
       liffAccessToken
     ) {
-      const templateName =
+      const temporaryTemplateCandidates = [
         process.env.LINE_SERVICE_TEMPLATE_TEMPORARY_RESERVATION ||
-        "tempreserv_s_ja";
+          "tempreserv_s_ja",
+        process.env.LINE_SERVICE_TEMPLATE_TEMPORARY_RESERVATION_FALLBACK || "",
+        "tempreserv_s_b_ja",
+        process.env.LINE_SERVICE_TEMPLATE_BOOKING_CONFIRMED || "",
+      ];
 
       try {
         const channelAccessToken = await getLineChannelAccessToken();
@@ -477,22 +559,22 @@ export const onReservationCreated = onDocumentCreated(
           throw new Error("Failed to issue LINE service notification token");
         }
 
-        const sent = await sendLineServiceMessage(
+        const templateResult = await sendLineServiceMessageWithTemplateFallback(
+          temporaryTemplateCandidates,
+          issued.notificationToken,
           {
-            templateName,
-            notificationToken: issued.notificationToken,
-            params: {
-              btn1_url: buttonUrl,
-            },
+            btn1_url: buttonUrl,
           },
           channelAccessToken
         );
+        const sent = templateResult.response;
+        const usedTemplateName = templateResult.templateName;
 
         const latestToken = sent.notificationToken || issued.notificationToken;
         await saveReservationServiceMessageSession({
           reservationId: snap.id,
           customerId,
-          templateName,
+          templateName: usedTemplateName,
           notificationToken: latestToken,
           remainingCount: sent.remainingCount,
           expiresIn: sent.expiresIn,
@@ -508,7 +590,7 @@ export const onReservationCreated = onDocumentCreated(
         logger.info("Temporary reservation service message sent in trigger", {
           reservationId: snap.id,
           customerId,
-          templateName,
+          templateName: usedTemplateName,
           remainingCount: sent.remainingCount,
         });
       } catch (serviceError: unknown) {
