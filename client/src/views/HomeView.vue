@@ -316,6 +316,7 @@ const submitReservation = async () => {
   try {
     const now = new Date()
     if (startDate < now) throw new Error('過去の日時は選択できません。')
+
     const businessHours = getBusinessHoursForDate(shopConfig.value, startDate)
     if (!businessHours) throw new Error('選択日は休業日です。')
 
@@ -430,8 +431,9 @@ const submitReservation = async () => {
               '学生メニュー（中学生まで）' : 'カイロプラクティック')) }}
           </h2>
           <p class="section-desc">
-            {{ activeTab === 'chiro' ? '身体のメンテナンスメニューです' : (activeTab === 'student' ? '中学生までの学生向けメニューです' :
-              'ご希望のメニューを選択してください') }}
+            {{ shopConfig.category_descriptions?.[activeTab] ||
+              (activeTab === 'chiro' ? '身体のメンテナンスメニューです' : (activeTab === 'student' ? '中学生までの学生向けメニューです' :
+                'ご希望のメニューを選択してください')) }}
           </p>
         </div>
         <ul class="menu-list">
