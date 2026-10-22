@@ -36,13 +36,14 @@ interface Reservation {
 interface Menu {
   id: string; title: string; duration_min: number; price: number
   price_with_tax?: number
-  category?: 'barber' | 'beauty' | 'student' | 'chiro'
+  category?: string
   available_staff_ids?: string[]
   tags?: string[]
   description?: string
   order_priority?: number
 }
 interface MenuTag { id: string; name: string; order_priority?: number }
+interface MenuCategoryItem { id: string; key: string; label: string; description?: string; order_priority?: number }
 
 const staffs = ref<Staff[]>([])
 // reservations for the left-side list (from selectedDate onward)
@@ -188,6 +189,33 @@ const newReservation = ref({
   staff_id: '', start_time: '', end_time: '', customer_name: '', customer_phone: '', customer_id: '', record_number: '', selectedMenuIds: [] as string[], note: ''
 })
 
+// --- 業務外予定（時間枠確保）専用の編集モーダル ---
+const showBlockEditModal = ref(false)
+const blockEditForm = ref({
+  id: '', staff_id: '', start_time: '', end_time: '', note: '', isAllDay: false
+})
+const closeBlockEditModal = () => {
+  showBlockEditModal.value = false
+}
+
+// 「終日」チェック時、対象日の営業時間（openHour〜closeHour）を開始/終了に反映する
+const applyAllDayToBlockForm = (baseDate: Date) => {
+  const start = new Date(baseDate)
+  start.setHours(openHour.value, 0, 0, 0)
+  const end = new Date(baseDate)
+  end.setHours(closeHour.value, 0, 0, 0)
+  blockEditForm.value.start_time = toLocalISOString(start)
+  blockEditForm.value.end_time = toLocalISOString(end)
+}
+
+// 終日チェックボックスの切り替え
+const onToggleBlockAllDay = () => {
+  if (blockEditForm.value.isAllDay) {
+    const baseDate = blockEditForm.value.start_time ? new Date(blockEditForm.value.start_time) : selectedDate.value
+    applyAllDayToBlockForm(baseDate)
+  }
+}
+
 // 時間枠確保（顧客情報なしの空枠）の定数
 const BLOCK_NOTE = '時間枠確保（予約情報未入力）'
 // 着信からの予約作成: 枠選択モード用の保持情報
@@ -317,12 +345,7 @@ const menuCategoryFilter = ref('')
 const menuTagFilter = ref('')
 const menuStaffFilterEnabled = ref(true)
 
-const menuCategories = [
-  { id: 'barber', label: '理容' },
-  { id: 'beauty', label: '美容' },
-  { id: 'student', label: '学生（中学まで）' },
-  { id: 'chiro', label: 'カイロ' }
-] as const
+const menuCategories = ref<MenuCategoryItem[]>([])
 
 const getTagName = (tagId: string): string => {
   return menuTags.value.find(t => t.id === tagId)?.name || ''
@@ -339,7 +362,7 @@ const filteredMenus = computed(() => {
       if (!haystack.includes(keyword)) return false
     }
     // カテゴリ
-    if (menuCategoryFilter.value && (m.category || 'barber') !== menuCategoryFilter.value) return false
+    if (menuCategoryFilter.value && (m.category || menuCategories.value[0]?.key || 'barber') !== menuCategoryFilter.value) return false
     // タグ
     if (menuTagFilter.value && !(m.tags ?? []).includes(menuTagFilter.value)) return false
     // 担当者フィルタ（担当未設定のメニューは無条件で表示）
@@ -353,10 +376,10 @@ const filteredMenus = computed(() => {
 
 // カテゴリごとにグルーピング（プルダウンの optgroup 用）
 const groupedFilteredMenus = computed(() => {
-  return menuCategories
+  return menuCategories.value
     .map(cat => ({
       ...cat,
-      menus: filteredMenus.value.filter(m => (m.category || 'barber') === cat.id)
+      menus: filteredMenus.value.filter(m => (m.category || menuCategories.value[0]?.key || 'barber') === cat.key)
     }))
     .filter(g => g.menus.length > 0)
 })
@@ -556,6 +579,10 @@ const initData = async (fetchMaster = true) => {
       menuTags.value = tagSnap.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .sort((a: any, b: any) => (a.order_priority ?? 999) - (b.order_priority ?? 999)) as MenuTag[]
+      const categorySnap = await getDocs(collection(db, 'menu_categories'))
+      menuCategories.value = categorySnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a: any, b: any) => (a.order_priority ?? 999) - (b.order_priority ?? 999)) as MenuCategoryItem[]
       const configSnap = await getDoc(doc(db, 'shop_config', 'default_config'))
       if (configSnap.exists()) {
         shopConfig.value = normalizeShopConfig(configSnap.data())
@@ -1509,6 +1536,7 @@ const approveReservation = async (res: Reservation) => {
 
 // 予約詳細を開く（履歴取得も行う）
 // ※着信からの予約作成モード中は、確保済みの空枠を選択して編集フォームを開く
+// ※通常モードでは、業務外予定（時間枠確保）の場合は専用の編集モーダルを開く
 const openReservationDetail = async (res: Reservation) => {
   if (pendingCallInfo.value) {
     if (isBlockReservation(res)) {
@@ -1527,6 +1555,13 @@ const openReservationDetail = async (res: Reservation) => {
     }
     return
   }
+
+  // 業務外予定（顧客情報なしの時間枠）は専用の編集モーダルを開く
+  if (isBlockReservation(res)) {
+    openBlockEditModal(res)
+    return
+  }
+
   selectedReservation.value = res
   showDetailModal.value = true
   customerHistory.value = []
@@ -1602,6 +1637,84 @@ const openEditModal = async (res: Reservation) => {
   await nextTick()
   if (matchedMenuIds.length === 0) {
     newReservation.value.end_time = toLocalISOString(res.end_at.toDate())
+  }
+}
+
+// --- 業務外予定（時間枠確保）専用の編集処理 ---
+// 通常予約フォームと異なり、メニューや顧客情報の入力を必須としない
+const openBlockEditModal = (res: Reservation) => {
+  const startDate = res.start_at.toDate()
+  const endDate = res.end_at.toDate()
+  // 既存の時間帯が、その日の営業時間（openHour〜closeHour）と一致するかで「終日」判定
+  const isAllDay = startDate.getHours() === openHour.value && startDate.getMinutes() === 0 &&
+    endDate.getHours() === closeHour.value && endDate.getMinutes() === 0
+
+  blockEditForm.value = {
+    id: res.id,
+    staff_id: res.staff_id,
+    start_time: toLocalISOString(startDate),
+    end_time: toLocalISOString(endDate),
+    note: (res.note && res.note !== BLOCK_NOTE) ? res.note : '',
+    isAllDay
+  }
+  showBlockEditModal.value = true
+}
+
+
+const submitBlockEdit = async () => {
+  const form = blockEditForm.value
+  if (!form.id) return
+
+  if (!form.staff_id) {
+    dialog.alert('担当スタッフを選択してください')
+    return
+  }
+  if (!form.start_time || !form.end_time) {
+    dialog.alert('開始・終了日時を入力してください')
+    return
+  }
+
+  // 終日チェック時は、念のため保存直前にも営業時間へ再計算しておく（日付のズレ防止）
+  if (form.isAllDay) {
+    applyAllDayToBlockForm(new Date(form.start_time))
+  }
+
+  const startDate = new Date(form.start_time)
+  const endDate = new Date(form.end_time)
+  if (endDate <= startDate) {
+    dialog.alert('終了日時は開始日時より後に設定してください')
+    return
+  }
+
+  try {
+    await updateDoc(doc(db, 'reservations', form.id), {
+      staff_id: form.staff_id,
+      start_at: Timestamp.fromDate(startDate),
+      end_at: Timestamp.fromDate(endDate),
+      note: form.note.trim() || BLOCK_NOTE
+    })
+    await dialog.alert('業務外予定を更新しました')
+    closeBlockEditModal()
+  } catch (e) {
+    console.error('業務外予定の更新エラー:', e)
+    dialog.alert('更新に失敗しました')
+  }
+}
+
+const deleteBlockReservation = async () => {
+  const form = blockEditForm.value
+  if (!form.id) return
+
+  const ok = await dialog.confirm('この業務外予定を削除しますか？', '削除確認', 'danger')
+  if (!ok) return
+
+  try {
+    await deleteDoc(doc(db, 'reservations', form.id))
+    await dialog.alert('業務外予定を削除しました')
+    closeBlockEditModal()
+  } catch (e) {
+    console.error('業務外予定の削除エラー:', e)
+    dialog.alert('削除に失敗しました')
   }
 }
 
@@ -1711,10 +1824,17 @@ const onMouseUp = async () => {
   }
 
   // 通常のドラッグ操作（着信対応中ではない）の場合は、
-  // 「予約を登録する」か「業務外予定にする」かを選択させる
+  // 「予約を登録する」か「業務外予定にする」かを選択させる（業務外予定選択時はメモも同時入力可能）
   const registerAsReservation = await dialog.open(
-    '時間枠を確保しました。\nこの枠をどちらで使用しますか？\n（業務外予定の場合は、あとで【枠】をクリックするとメモに予定内容を入力できます）',
-    { title: '枠の利用方法を選択', type: 'normal', cancelText: '業務外予定にする', confirmText: '予約を登録する' }
+    '時間枠を確保しました。\nこの枠をどちらで使用しますか？\n（業務外予定の場合は、下の欄に予定内容を入力できます）',
+    {
+      title: '枠の利用方法を選択',
+      type: 'normal',
+      cancelText: '業務外予定にする',
+      confirmText: '予約を登録する',
+      showMemoInput: true,
+      memoPlaceholder: '例：会議、休憩、来客対応 など'
+    }
   )
   if (registerAsReservation && blockId) {
     const block = dayReservations.value.find(r => r.id === blockId)
@@ -1733,6 +1853,16 @@ const onMouseUp = async () => {
         customer_phone: '',
         note: BLOCK_NOTE
       })
+    }
+  } else if (!registerAsReservation && blockId) {
+    // 業務外予定にする場合、ダイアログで入力されたメモを時間枠の note として保存する
+    const memo = dialog.memoInput.trim()
+    if (memo) {
+      try {
+        await updateDoc(doc(db, 'reservations', blockId), { note: memo })
+      } catch (e) {
+        console.error('メモの保存に失敗しました:', e)
+      }
     }
   }
 }
@@ -2312,9 +2442,20 @@ const exportReservationsToExcel = async () => {
                       :title="getTooltipText(res)" @mousedown.stop @click.stop="openReservationDetail(res)">
                       <span class="bar-text">
                         <span v-if="res.status === 'pending'">【未】</span>
-                        <span v-else-if="isBlockReservation(res)">【枠】</span>
-                        {{ isBlockReservation(res) ? '時間枠確保' : res.menu_items[0]?.title }}
-                        <span v-if="!isBlockReservation(res)" class="bar-customer-name">{{ getReservationDisplayName(res) }}</span>
+                        <span v-else-if="isBlockReservation(res) && !(res.note && res.note !== BLOCK_NOTE)">【枠】</span>
+                        <span v-else-if="isBlockReservation(res) && res.note && res.note !== BLOCK_NOTE">【予定あり】</span>
+                        <template v-if="isBlockReservation(res)">
+                          <template v-if="res.note && res.note !== BLOCK_NOTE">
+                            <span class="bar-memo-text">📝 {{ res.note }}</span>
+                          </template>
+                          <template v-else>
+                            時間枠確保
+                          </template>
+                        </template>
+                        <template v-else>
+                          {{ res.menu_items[0]?.title }}
+                          <span class="bar-customer-name">{{ getReservationDisplayName(res) }}</span>
+                        </template>
                       </span>
                     </div>
                   </template>
@@ -2476,7 +2617,7 @@ const exportReservationsToExcel = async () => {
             <div class="menu-filter-row">
               <select v-model="menuCategoryFilter" class="menu-filter-select">
                 <option value="">カテゴリ: 全て</option>
-                <option v-for="cat in menuCategories" :key="cat.id" :value="cat.id">{{ cat.label }}</option>
+                <option v-for="cat in menuCategories" :key="cat.id" :value="cat.key">{{ cat.label }}</option>
               </select>
               <select v-model="menuTagFilter" class="menu-filter-select">
                 <option value="">タグ: 全て</option>
@@ -2559,6 +2700,45 @@ const exportReservationsToExcel = async () => {
         </div>
         <div class="modal-actions right-align">
           <button class="save-btn" @click="submitReservation">{{ isEditing ? '更新する' : '登録する' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 業務外予定（時間枠確保）専用の編集モーダル -->
+    <div v-if="showBlockEditModal" class="modal-overlay" @click.self="closeBlockEditModal">
+      <div class="modal-content">
+        <div class="modal-header-row">
+          <h3>業務外予定の編集</h3>
+          <button class="close-x-btn" @click="closeBlockEditModal">×</button>
+        </div>
+        <div class="form-group staff-select-group">
+          <label>担当スタッフ <span style="color: #e74c3c;">*</span></label>
+          <select v-model="blockEditForm.staff_id">
+            <option value="" disabled>担当スタッフを選択してください</option>
+            <option v-for="s in staffs" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="all-day-toggle">
+            <input type="checkbox" v-model="blockEditForm.isAllDay" @change="onToggleBlockAllDay">
+            終日（営業時間 {{ openHour }}:00〜{{ closeHour }}:00 を確保）
+          </label>
+        </div>
+        <div class="form-group">
+          <label>開始日時 <span style="color: #e74c3c;">*</span></label>
+          <input type="datetime-local" v-model="blockEditForm.start_time" :disabled="blockEditForm.isAllDay">
+        </div>
+        <div class="form-group">
+          <label>終了日時 <span style="color: #e74c3c;">*</span></label>
+          <input type="datetime-local" v-model="blockEditForm.end_time" :disabled="blockEditForm.isAllDay">
+        </div>
+        <div class="form-group">
+          <label>メモ（予定内容）</label>
+          <textarea v-model="blockEditForm.note" placeholder="例：会議、休憩、来客対応 など"></textarea>
+        </div>
+        <div class="modal-actions right-align">
+          <button class="delete-btn" @click="deleteBlockReservation">削除する</button>
+          <button class="save-btn" @click="submitBlockEdit">更新する</button>
         </div>
       </div>
     </div>
@@ -3565,6 +3745,16 @@ const exportReservationsToExcel = async () => {
   text-overflow: ellipsis;
 }
 
+.bar-memo-text {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 400;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.9;
+}
+
 .reservation-bar:hover {
   z-index: 10;
   opacity: 1;
@@ -3719,6 +3909,29 @@ textarea {
   border-radius: 4px;
   font-weight: bold;
   cursor: pointer;
+}
+
+.delete-btn {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.5rem 1.5rem;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.all-day-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.all-day-toggle input[type="checkbox"] {
+  width: auto;
 }
 
 .cancel-btn {
