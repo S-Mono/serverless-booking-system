@@ -152,3 +152,11 @@ vite.config.ts.timestamp-*
 # LINE Assertion Keys
 private-key.json
 public-key.json
+
+# Local virtual environments / tooling (security tests)
+.venv/
+.jdk/
+tests/**/node_modules/
+firestore-debug.log
+ui-debug.log
+tests/security/result.txt
