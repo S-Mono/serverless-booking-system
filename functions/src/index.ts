@@ -765,8 +765,8 @@ export const deleteUserAccount = onCall(
         });
 
         if (userAccessToken) {
-          // JWTを使ってチャネルアクセストークンを取得
-          logger.info("Obtaining channel access token via JWT...");
+          // client_credentials でチャネルアクセストークンを取得
+          logger.info("Obtaining channel access token...");
           const channelAccessToken = await getLineChannelAccessToken();
 
           if (!channelAccessToken) {
